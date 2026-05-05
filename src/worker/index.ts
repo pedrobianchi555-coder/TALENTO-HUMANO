@@ -1264,11 +1264,13 @@ app.get("/api/evaluations", authMiddleware, async (c) => {
 app.get("/api/evaluation-cycles", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role and permission
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -1278,11 +1280,14 @@ app.get("/api/evaluation-cycles", authMiddleware, async (c) => {
       return c.json({ error: 'Unauthorized: Missing permission to view evaluation cycles' }, 403);
     }
 
-    const cycles = await c.env.DB.prepare(
-      "SELECT * FROM evaluation_cycles ORDER BY created_at DESC"
-    ).all();
+    const { data: cycles, error } = await db
+      .from('evaluation_cycles')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-    return c.json(cycles.results || []);
+    if (error) throw error;
+
+    return c.json(cycles || []);
   } catch (error) {
     console.error('Error getting evaluation cycles:', error);
     return c.json({ error: 'Failed to get evaluation cycles' }, 500);
@@ -1324,67 +1329,89 @@ app.put("/api/evaluations/:id/self-evaluation", authMiddleware, rateLimiter(Rate
       return c.json({ error: 'Comments are required (10-2000 characters)' }, 400);
     }
 
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const userId = (userProfile as any).id;
+    const userId = userProfile.id;
 
     // Verify it's the user's self-evaluation
-    const existingEvaluation = await c.env.DB.prepare(
-      "SELECT employee_id, evaluator_id, status, cycle_id FROM evaluations WHERE id = ?"
-    ).bind(evaluationId).first();
+    const { data: existingEvaluation, error: evalErr } = await db
+      .from('evaluations')
+      .select('employee_id, evaluator_id, status, cycle_id')
+      .eq('id', evaluationId)
+      .single();
 
     if (!existingEvaluation) {
       return c.json({ error: 'Evaluation not found' }, 404);
     }
 
     // Must be a self-evaluation (employee_id == evaluator_id == current user)
-    if ((existingEvaluation as any).employee_id !== userId || (existingEvaluation as any).evaluator_id !== userId) {
+    if (existingEvaluation.employee_id !== userId || existingEvaluation.evaluator_id !== userId) {
       return c.json({ error: 'Unauthorized: This is not your self-evaluation' }, 403);
     }
 
-    if ((existingEvaluation as any).status !== 'PENDING') {
+    if (existingEvaluation.status !== 'PENDING') {
       return c.json({ error: 'Self-evaluation can only be submitted when status is PENDING' }, 400);
     }
 
     // Update self-evaluation
-    await c.env.DB.prepare(`
-      UPDATE evaluations SET
-        self_score = ?,
-        self_comments = ?,
-        status = 'SELF_COMPLETED',
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(cleanScore, cleanComments, evaluationId).run();
+    const { error: updateErr } = await db
+      .from('evaluations')
+      .update({
+        self_score: cleanScore,
+        self_comments: cleanComments,
+        status: 'SELF_COMPLETED',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', evaluationId);
+
+    if (updateErr) throw updateErr;
 
     // Find corresponding manager evaluation and update its status to MANAGER_COMPLETED (pending manager input)
-    await c.env.DB.prepare(`
-      UPDATE evaluations SET
-        status = 'MANAGER_COMPLETED',
-        updated_at = CURRENT_TIMESTAMP
-      WHERE cycle_id = ? AND employee_id = ? AND evaluator_id != ? AND status = 'PENDING'
-    `).bind((existingEvaluation as any).cycle_id, (existingEvaluation as any).employee_id, userId).run();
+    const { error: updateManagerErr } = await db
+      .from('evaluations')
+      .update({
+        status: 'MANAGER_COMPLETED',
+        updated_at: new Date().toISOString()
+      })
+      .eq('cycle_id', existingEvaluation.cycle_id)
+      .eq('employee_id', existingEvaluation.employee_id)
+      .neq('evaluator_id', userId)
+      .eq('status', 'PENDING');
 
-    // Get updated evaluation
-    const updatedEvaluation = await c.env.DB.prepare(`
-      SELECT e.*, 
-             emp.first_name || ' ' || emp.last_name as employee_name,
-             emp.department as employee_department,
-             eval.first_name || ' ' || eval.last_name as evaluator_name,
-             ec.title as cycle_title
-      FROM evaluations e
-      JOIN users emp ON e.employee_id = emp.id
-      JOIN users eval ON e.evaluator_id = eval.id
-      JOIN evaluation_cycles ec ON e.cycle_id = ec.id
-      WHERE e.id = ?
-    `).bind(evaluationId).first();
+    if (updateManagerErr) throw updateManagerErr;
 
-    return c.json(updatedEvaluation);
+    // Get updated evaluation with relationships
+    const { data: updatedEvaluation, error: fetchErr } = await db
+      .from('evaluations')
+      .select(`
+        *,
+        employee:users!evaluations_employee_id_fkey(first_name, last_name, department),
+        evaluator:users!evaluations_evaluator_id_fkey(first_name, last_name),
+        cycle:evaluation_cycles(title)
+      `)
+      .eq('id', evaluationId)
+      .single();
+
+    if (fetchErr) throw fetchErr;
+
+    // Transform the response to match the original format
+    const transformed = {
+      ...updatedEvaluation,
+      employee_name: `${updatedEvaluation.employee.first_name} ${updatedEvaluation.employee.last_name}`,
+      employee_department: updatedEvaluation.employee.department,
+      evaluator_name: `${updatedEvaluation.evaluator.first_name} ${updatedEvaluation.evaluator.last_name}`,
+      cycle_title: updatedEvaluation.cycle.title
+    };
+
+    return c.json(transformed);
   } catch (error) {
     console.error('Error submitting self-evaluation:', error);
     return c.json({ error: 'Failed to submit self-evaluation' }, 500);
@@ -1426,21 +1453,25 @@ app.put("/api/evaluations/:id/manager-evaluation", authMiddleware, rateLimiter(R
       return c.json({ error: 'Comments are required (10-2000 characters)' }, 400);
     }
 
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const userId = (userProfile as any).id;
-    const isHR = (userProfile as any).role === 'HR';
+    const userId = userProfile.id;
+    const isHR = userProfile.role === 'HR';
 
     // Get the evaluation to verify its status and evaluator
-    const evaluation = await c.env.DB.prepare(
-      "SELECT * FROM evaluations WHERE id = ?"
-    ).bind(evaluationId).first();
+    const { data: evaluation, error: evalErr } = await db
+      .from('evaluations')
+      .select('*')
+      .eq('id', evaluationId)
+      .single();
 
     if (!evaluation) {
       return c.json({ error: 'Evaluation not found' }, 404);
@@ -1448,49 +1479,61 @@ app.put("/api/evaluations/:id/manager-evaluation", authMiddleware, rateLimiter(R
 
     // Verify user is authorized to evaluate
     const canManageEvaluations = isHR && hasPermission(userProfile as any, PERMISSIONS.EVALUATION_MANAGE_EMPLOYEE_EVALUATION);
-    const isAssignedEvaluator = (evaluation as any).evaluator_id === userId;
+    const isAssignedEvaluator = evaluation.evaluator_id === userId;
 
     if (!canManageEvaluations && !isAssignedEvaluator) {
       return c.json({ error: 'Unauthorized: You are not authorized to complete this evaluation' }, 403);
     }
 
     // Must not be a self-evaluation
-    if ((evaluation as any).employee_id === (evaluation as any).evaluator_id) {
+    if (evaluation.employee_id === evaluation.evaluator_id) {
       return c.json({ error: 'Cannot submit manager evaluation for a self-evaluation' }, 400);
     }
 
     // Check valid status (MANAGER_COMPLETED means waiting for manager input)
-    if ((evaluation as any).status !== 'MANAGER_COMPLETED') {
+    if (evaluation.status !== 'MANAGER_COMPLETED') {
       return c.json({ error: 'Manager evaluation can only be submitted when status is MANAGER_COMPLETED (waiting for manager input)' }, 400);
     }
 
     // Update evaluation with manager input
-    await c.env.DB.prepare(`
-      UPDATE evaluations SET
-        manager_score = ?,
-        manager_comments = ?,
-        final_score = ?,
-        status = 'COMPLETED',
-        completed_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(cleanScore, cleanComments, cleanScore, evaluationId).run();
+    const { error: updateErr } = await db
+      .from('evaluations')
+      .update({
+        manager_score: cleanScore,
+        manager_comments: cleanComments,
+        final_score: cleanScore,
+        status: 'COMPLETED',
+        completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', evaluationId);
 
-    // Get the updated evaluation with employee and evaluator names
-    const updatedEvaluation = await c.env.DB.prepare(`
-      SELECT e.*, 
-             emp.first_name || ' ' || emp.last_name as employee_name,
-             emp.department as employee_department,
-             eval.first_name || ' ' || eval.last_name as evaluator_name,
-             ec.title as cycle_title
-      FROM evaluations e
-      JOIN users emp ON e.employee_id = emp.id
-      JOIN users eval ON e.evaluator_id = eval.id
-      JOIN evaluation_cycles ec ON e.cycle_id = ec.id
-      WHERE e.id = ?
-    `).bind(evaluationId).first();
+    if (updateErr) throw updateErr;
 
-    return c.json(updatedEvaluation);
+    // Get the updated evaluation with relationships
+    const { data: updatedEvaluation, error: fetchErr } = await db
+      .from('evaluations')
+      .select(`
+        *,
+        employee:users!evaluations_employee_id_fkey(first_name, last_name, department),
+        evaluator:users!evaluations_evaluator_id_fkey(first_name, last_name),
+        cycle:evaluation_cycles(title)
+      `)
+      .eq('id', evaluationId)
+      .single();
+
+    if (fetchErr) throw fetchErr;
+
+    // Transform the response to match the original format
+    const transformed = {
+      ...updatedEvaluation,
+      employee_name: `${updatedEvaluation.employee.first_name} ${updatedEvaluation.employee.last_name}`,
+      employee_department: updatedEvaluation.employee.department,
+      evaluator_name: `${updatedEvaluation.evaluator.first_name} ${updatedEvaluation.evaluator.last_name}`,
+      cycle_title: updatedEvaluation.cycle.title
+    };
+
+    return c.json(transformed);
   } catch (error) {
     console.error('Error submitting manager evaluation:', error);
     return c.json({ error: 'Failed to submit manager evaluation' }, 500);
@@ -1501,11 +1544,13 @@ app.put("/api/evaluations/:id/manager-evaluation", authMiddleware, rateLimiter(R
 app.post("/api/evaluation-cycles", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role and permission
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -1531,16 +1576,23 @@ app.post("/api/evaluation-cycles", authMiddleware, async (c) => {
     }
 
     // Create evaluation cycle
-    const result = await c.env.DB.prepare(`
-      INSERT INTO evaluation_cycles (
-        title, description, start_date, end_date, department, status, created_by_id
-      ) VALUES (?, ?, ?, ?, ?, 'DRAFT', ?)
-    `).bind(title.trim(), description?.trim() || null, start_date, end_date, department?.trim() || null, userProfile.id).run();
+    const { data: cycle, error: insertErr } = await db
+      .from('evaluation_cycles')
+      .insert({
+        title: title.trim(),
+        description: description?.trim() || null,
+        start_date,
+        end_date,
+        department: department?.trim() || null,
+        status: 'DRAFT',
+        created_by_id: userProfile.id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
 
-    // Get the created cycle
-    const cycle = await c.env.DB.prepare(
-      "SELECT * FROM evaluation_cycles WHERE id = ?"
-    ).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
     return c.json(cycle);
   } catch (error) {
@@ -1554,11 +1606,13 @@ app.put("/api/evaluation-cycles/:id/activate", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const cycleId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role and permission
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -1569,34 +1623,41 @@ app.put("/api/evaluation-cycles/:id/activate", authMiddleware, async (c) => {
     }
 
     // Get the cycle to check its current status and department
-    const cycle = await c.env.DB.prepare(
-      "SELECT status, department FROM evaluation_cycles WHERE id = ?"
-    ).bind(cycleId).first();
+    const { data: cycle, error: cycleErr } = await db
+      .from('evaluation_cycles')
+      .select('status, department')
+      .eq('id', cycleId)
+      .single();
 
     if (!cycle) {
       return c.json({ error: 'Cycle not found' }, 404);
     }
 
-    if ((cycle as any).status !== 'DRAFT') {
+    if (cycle.status !== 'DRAFT') {
       return c.json({ error: 'Only DRAFT cycles can be activated' }, 400);
     }
 
     // Get active employees for the cycle (filtered by department if specified)
-    let employeeQuery = "SELECT id, first_name, last_name, manager_id, position, department FROM users WHERE role = 'EMPLOYEE' AND status = 'ACTIVE'";
-    const cycleDepartment = (cycle as any).department;
-    
-    const allActiveEmployees = cycleDepartment
-      ? await c.env.DB.prepare(employeeQuery + " AND department = ?").bind(cycleDepartment).all()
-      : await c.env.DB.prepare(employeeQuery).all();
+    let query = db
+      .from('users')
+      .select('id, first_name, last_name, manager_id, position, department')
+      .eq('role', 'EMPLOYEE')
+      .eq('status', 'ACTIVE');
 
-    if (!allActiveEmployees.results || allActiveEmployees.results.length === 0) {
-      const errorMsg = cycleDepartment 
-        ? `No se encontraron empleados activos en el departamento ${cycleDepartment}`
+    if (cycle.department) {
+      query = query.eq('department', cycle.department);
+    }
+
+    const { data: allActiveEmployees, error: empErr } = await query;
+
+    if (!allActiveEmployees || allActiveEmployees.length === 0) {
+      const errorMsg = cycle.department
+        ? `No se encontraron empleados activos en el departamento ${cycle.department}`
         : 'No se encontraron empleados activos para generar evaluaciones';
       return c.json({ error: errorMsg }, 400);
     }
 
-    const employeesToEvaluate = allActiveEmployees.results as any[];
+    const employeesToEvaluate = allActiveEmployees;
 
     // Check if all employees have a manager assigned
     const employeesWithoutManager = employeesToEvaluate.filter(emp => !emp.manager_id);
@@ -1604,47 +1665,73 @@ app.put("/api/evaluation-cycles/:id/activate", authMiddleware, async (c) => {
       const employeeNames = employeesWithoutManager
         .map(emp => `${emp.first_name} ${emp.last_name}`)
         .join(', ');
-      return c.json({ 
-        error: `No se puede activar el ciclo. Los siguientes empleados no tienen manager asignado: ${employeeNames}. Por favor, asigna un manager a cada empleado antes de activar el ciclo.` 
+      return c.json({
+        error: `No se puede activar el ciclo. Los siguientes empleados no tienen manager asignado: ${employeeNames}. Por favor, asigna un manager a cada empleado antes de activar el ciclo.`
       }, 400);
     }
 
     // Delete existing evaluations for this cycle to avoid duplicates
-    await c.env.DB.prepare("DELETE FROM evaluations WHERE cycle_id = ?").bind(cycleId).run();
+    const { error: deleteErr } = await db
+      .from('evaluations')
+      .delete()
+      .eq('cycle_id', cycleId);
 
-    // Create evaluation statements
-    const statements = [];
-    
+    if (deleteErr) throw deleteErr;
+
+    // Create evaluations array for batch insert
+    const evaluationsToCreate = [];
+
+    const now = new Date().toISOString();
     for (const employee of employeesToEvaluate) {
       // 1. Self-evaluation for everyone
-      statements.push(c.env.DB.prepare(`
-        INSERT INTO evaluations (cycle_id, employee_id, evaluator_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, 'PENDING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).bind(cycleId, employee.id, employee.id));
+      evaluationsToCreate.push({
+        cycle_id: cycleId,
+        employee_id: employee.id,
+        evaluator_id: employee.id,
+        status: 'PENDING',
+        created_at: now,
+        updated_at: now
+      });
 
       // 2. Manager evaluation: create evaluation where manager evaluates employee
-      // Initial status is PENDING - it will change to MANAGER_EVALUATION_PENDING after employee completes self-evaluation
-      statements.push(c.env.DB.prepare(`
-        INSERT INTO evaluations (cycle_id, employee_id, evaluator_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, 'PENDING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).bind(cycleId, employee.id, employee.manager_id));
+      evaluationsToCreate.push({
+        cycle_id: cycleId,
+        employee_id: employee.id,
+        evaluator_id: employee.manager_id,
+        status: 'PENDING',
+        created_at: now,
+        updated_at: now
+      });
     }
 
-    // Execute all evaluation insertions in batch
-    if (statements.length > 0) {
-      await c.env.DB.batch(statements);
+    // Insert all evaluations in batch
+    if (evaluationsToCreate.length > 0) {
+      const { error: insertErr } = await db
+        .from('evaluations')
+        .insert(evaluationsToCreate);
+
+      if (insertErr) throw insertErr;
     }
 
     // Update cycle status to ACTIVE
-    await c.env.DB.prepare(`
-      UPDATE evaluation_cycles SET status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(cycleId).run();
+    const { error: updateErr } = await db
+      .from('evaluation_cycles')
+      .update({
+        status: 'ACTIVE',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', cycleId);
+
+    if (updateErr) throw updateErr;
 
     // Get the updated cycle
-    const updatedCycle = await c.env.DB.prepare(
-      "SELECT * FROM evaluation_cycles WHERE id = ?"
-    ).bind(cycleId).first();
+    const { data: updatedCycle, error: fetchErr } = await db
+      .from('evaluation_cycles')
+      .select('*')
+      .eq('id', cycleId)
+      .single();
+
+    if (fetchErr) throw fetchErr;
 
     return c.json(updatedCycle);
   } catch (error) {
@@ -1718,42 +1805,49 @@ app.get("/api/events", authMiddleware, async (c) => {
 app.post("/api/events", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const { 
-      title, 
-      description, 
-      category, 
-      start_date, 
-      end_date, 
-      start_time, 
-      location, 
-      target_audience 
+    const {
+      title,
+      description,
+      category,
+      start_date,
+      end_date,
+      start_time,
+      location,
+      target_audience
     } = await c.req.json();
 
     // Create event
-    const result = await c.env.DB.prepare(`
-      INSERT INTO corporate_events (
-        title, description, category, start_date, end_date, start_time, 
-        location, target_audience, created_by_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      title, description, category, start_date, end_date, start_time, 
-      location, target_audience, userProfile.id
-    ).run();
+    const { data: event, error: insertErr } = await db
+      .from('corporate_events')
+      .insert({
+        title,
+        description,
+        category,
+        start_date,
+        end_date,
+        start_time,
+        location,
+        target_audience,
+        created_by_id: userProfile.id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select()
+      .single();
 
-    // Get the created event
-    const event = await c.env.DB.prepare(
-      "SELECT * FROM corporate_events WHERE id = ?"
-    ).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
     return c.json(event);
   } catch (error) {
@@ -2018,25 +2112,28 @@ app.put("/api/requests/:id/status", authMiddleware, requirePermission(PERMISSION
 app.get("/api/employees/managers", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    // Get all active users who can be managers (HR or employees with leadership roles)
-    const managers = await c.env.DB.prepare(`
-      SELECT id, first_name, last_name, email, department, position
-      FROM users
-      WHERE status = 'ACTIVE'
-      ORDER BY first_name, last_name
-    `).all();
+    // Get all active users who can be managers
+    const { data: managers, error } = await db
+      .from('users')
+      .select('id, first_name, last_name, email, department, position')
+      .eq('status', 'ACTIVE')
+      .order('first_name', { ascending: true });
 
-    return c.json(managers.results || []);
+    if (error) throw error;
+
+    return c.json(managers || []);
   } catch (error) {
     console.error('Error getting managers:', error);
     return c.json({ error: 'Failed to get managers' }, 500);
@@ -2100,11 +2197,13 @@ app.put("/api/employees/:id", authMiddleware, async (c) => {
 app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPLOAD), async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       logSecurityEvent({
@@ -2141,14 +2240,14 @@ app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPL
 
     // Parse CSV
     const lines = csv_content.trim().split('\n');
-    
+
     if (lines.length < 2) {
       return c.json({ error: 'CSV file is empty or invalid' }, 400);
     }
 
     // Skip header row
     const dataLines = lines.slice(1);
-    
+
     let imported = 0;
     let skipped = 0;
     const errors: string[] = [];
@@ -2161,10 +2260,10 @@ app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPL
         const fields: string[] = [];
         let currentField = '';
         let inQuotes = false;
-        
+
         for (let i = 0; i < line.length; i++) {
           const char = line[i];
-          
+
           if (char === '"') {
             inQuotes = !inQuotes;
           } else if (char === ',' && !inQuotes) {
@@ -2185,16 +2284,18 @@ app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPL
 
         // Clean CI (remove quotes and whitespace)
         const cleanCi = ci.replace(/"/g, '').trim();
-        
+
         if (!cleanCi || !last_name || !first_name) {
           errors.push(`Datos incompletos en línea: CI=${cleanCi}, Nombre=${first_name}, Apellido=${last_name}`);
           continue;
         }
 
         // Check if employee already exists by CI
-        const existingEmployee = await c.env.DB.prepare(
-          "SELECT id FROM users WHERE ci = ?"
-        ).bind(cleanCi).first();
+        const { data: existingEmployee, error: checkErr } = await db
+          .from('users')
+          .select('id')
+          .eq('ci', cleanCi)
+          .single();
 
         if (existingEmployee) {
           skipped++;
@@ -2215,22 +2316,25 @@ app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPL
         }
 
         // Insert employee
-        await c.env.DB.prepare(`
-          INSERT INTO users (
-            mocha_user_id, email, first_name, last_name, ci, department,
-            position, payroll_type, company_name, role, status
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'EMPLOYEE', 'ACTIVE')
-        `).bind(
-          tempMochaId,
-          email,
-          first_name.trim(),
-          last_name.trim(),
-          cleanCi,
-          department.trim() || null,
-          position.trim() || null,
-          cleanPayrollType,
-          company_name
-        ).run();
+        const { error: insertErr } = await db
+          .from('users')
+          .insert({
+            mocha_user_id: tempMochaId,
+            email,
+            first_name: first_name.trim(),
+            last_name: last_name.trim(),
+            ci: cleanCi,
+            department: department.trim() || null,
+            position: position.trim() || null,
+            payroll_type: cleanPayrollType,
+            company_name,
+            role: 'EMPLOYEE',
+            status: 'ACTIVE',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (insertErr) throw insertErr;
 
         imported++;
       } catch (lineError) {
@@ -2453,89 +2557,101 @@ app.delete("/api/employees/:id", authMiddleware, rateLimiter(RateLimits.SENSITIV
     const mochaUser = c.get("user");
     const employeeId = parseInt(c.req.param('id'));
     const reason = c.req.query('reason') || 'No reason provided';
-    
+
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.SENSITIVE_OPERATION,
       userId: mochaUser!.id,
       details: { action: 'delete_employee', employeeId, reason }
     });
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, first_name, last_name, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, first_name, last_name, role')
+      .eq('mocha_user_id', mochaUser!.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
-    
-    if (!userProfile) {
-      return c.json({ error: 'User profile not found' }, 404);
-    }
 
     // Get employee data before deletion
-    const employee = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE id = ? AND role = 'EMPLOYEE'"
-    ).bind(employeeId).first();
+    const { data: employee, error: empErr } = await db
+      .from('users')
+      .select('*')
+      .eq('id', employeeId)
+      .eq('role', 'EMPLOYEE')
+      .single();
 
     if (!employee) {
       return c.json({ error: 'Employee not found' }, 404);
     }
 
     // Check if employee has related records that prevent deletion
-    const hasLoans = await c.env.DB.prepare(
-      "SELECT COUNT(*) as count FROM loans WHERE user_id = ?"
-    ).bind(employeeId).first();
+    const { count: loansCount, error: loansErr } = await db
+      .from('loans')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', employeeId);
 
-    const hasRequests = await c.env.DB.prepare(
-      "SELECT COUNT(*) as count FROM requests WHERE user_id = ?"
-    ).bind(employeeId).first();
+    const { count: requestsCount, error: requestsErr } = await db
+      .from('requests')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', employeeId);
 
-    const hasComplaints = await c.env.DB.prepare(
-      "SELECT COUNT(*) as count FROM complaints WHERE user_id = ?"
-    ).bind(employeeId).first();
+    const { count: complaintsCount, error: complaintsErr } = await db
+      .from('complaints')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', employeeId);
 
-    if ((hasLoans as any)?.count > 0 || (hasRequests as any)?.count > 0 || (hasComplaints as any)?.count > 0) {
-      return c.json({ 
+    if ((loansCount || 0) > 0 || (requestsCount || 0) > 0 || (complaintsCount || 0) > 0) {
+      return c.json({
         error: 'Cannot delete employee with existing records. Please inactivate instead.',
-        hasLoans: (hasLoans as any)?.count > 0,
-        hasRequests: (hasRequests as any)?.count > 0,
-        hasComplaints: (hasComplaints as any)?.count > 0
+        hasLoans: (loansCount || 0) > 0,
+        hasRequests: (requestsCount || 0) > 0,
+        hasComplaints: (complaintsCount || 0) > 0
       }, 400);
     }
 
     // Create audit log before deletion
-    await c.env.DB.prepare(`
-      INSERT INTO employee_audit_log (
-        employee_id, employee_ci, employee_name, employee_email,
-        action_type, reason, performed_by_id, performed_by_name,
-        employee_data_snapshot
-      ) VALUES (?, ?, ?, ?, 'DELETED', ?, ?, ?, ?)
-    `).bind(
-      employeeId,
-      employee.ci,
-      `${employee.first_name} ${employee.last_name}`,
-      employee.email,
-      reason,
-      userProfile.id,
-      `${userProfile.first_name} ${userProfile.last_name}`,
-      JSON.stringify(employee)
-    ).run();
+    const { error: auditErr } = await db
+      .from('employee_audit_log')
+      .insert({
+        employee_id: employeeId,
+        employee_ci: employee.ci,
+        employee_name: `${employee.first_name} ${employee.last_name}`,
+        employee_email: employee.email,
+        action_type: 'DELETED',
+        reason,
+        performed_by_id: userProfile.id,
+        performed_by_name: `${userProfile.first_name} ${userProfile.last_name}`,
+        employee_data_snapshot: employee,
+        created_at: new Date().toISOString()
+      });
+
+    if (auditErr) throw auditErr;
 
     // Delete related records first
-    await c.env.DB.prepare("DELETE FROM family_dependents WHERE user_id = ?").bind(employeeId).run();
-    await c.env.DB.prepare("DELETE FROM asset_assignments WHERE user_id = ?").bind(employeeId).run();
-    await c.env.DB.prepare("DELETE FROM evaluations WHERE employee_id = ?").bind(employeeId).run();
-    await c.env.DB.prepare("DELETE FROM event_rsvps WHERE user_id = ?").bind(employeeId).run();
-    await c.env.DB.prepare("DELETE FROM conversation_participants WHERE user_id = ?").bind(employeeId).run();
+    await db.from('family_dependents').delete().eq('user_id', employeeId);
+    await db.from('asset_assignments').delete().eq('user_id', employeeId);
+    await db.from('evaluations').delete().eq('employee_id', employeeId);
+    await db.from('event_rsvps').delete().eq('user_id', employeeId);
+    await db.from('conversation_participants').delete().eq('user_id', employeeId);
 
     // Update assets assigned to this employee
-    await c.env.DB.prepare(
-      "UPDATE assets SET assigned_to_id = NULL, status = 'AVAILABLE' WHERE assigned_to_id = ?"
-    ).bind(employeeId).run();
+    const { error: assetsErr } = await db
+      .from('assets')
+      .update({ assigned_to_id: null, status: 'AVAILABLE' })
+      .eq('assigned_to_id', employeeId);
+
+    if (assetsErr) throw assetsErr;
 
     // Delete the employee
-    await c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(employeeId).run();
+    const { error: delErr } = await db
+      .from('users')
+      .delete()
+      .eq('id', employeeId);
+
+    if (delErr) throw delErr;
 
     return c.json({ success: true });
   } catch (error) {
@@ -2599,11 +2715,13 @@ app.get("/api/candidates", authMiddleware, async (c) => {
 app.get("/api/ai/test", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -4284,10 +4402,42 @@ app.get("/api/reports/assets/export-pdf", authMiddleware, requirePermission(PERM
       query += " ORDER BY a.name ASC";
     }
 
-    const assets = await c.env.DB.prepare(query).bind(...params).all();
+    // Build Supabase query
+    let query = db
+      .from('assets')
+      .select(`
+        *,
+        category:asset_categories(name),
+        assigned_to:users(first_name, last_name, department)
+      `);
 
-    if (!assets.results || assets.results.length === 0) {
+    if (employeeId) {
+      query = query.eq('assigned_to_id', parseInt(employeeId));
+    } else {
+      if (categoryId) {
+        query = query.eq('category_id', parseInt(categoryId));
+      }
+      if (conditionStatus) {
+        query = query.eq('condition_status', conditionStatus);
+      }
+      if (operationalStatus) {
+        query = query.eq('status', operationalStatus);
+      }
+      // Note: Department filter requires joining with users table, handled in post-processing
+    }
+
+    const { data: assets, error: assetsErr } = await query.order('name', { ascending: true });
+
+    if (assetsErr) throw assetsErr;
+
+    if (!assets || assets.length === 0) {
       return c.json({ error: 'No se encontraron activos para exportar' }, 404);
+    }
+
+    // Filter by department if needed (post-fetch filter)
+    let filteredAssets = assets;
+    if (department && !employeeId) {
+      filteredAssets = assets.filter(a => a.assigned_to?.department === department);
     }
 
     // Helper function to get readable status text
@@ -4330,19 +4480,19 @@ app.get("/api/reports/assets/export-pdf", authMiddleware, requirePermission(PERM
     let yPos = 25;
     doc.text(`Fecha de generación: ${new Date().toLocaleDateString('es-ES')}`, 14, yPos);
     yPos += 6;
-    doc.text(`Total de activos: ${assets.results.length}`, 14, yPos);
+    doc.text(`Total de activos: ${filteredAssets.length}`, 14, yPos);
     yPos += 10;
 
     // Table data
-    const tableData = assets.results.map((asset: any) => [
+    const tableData = filteredAssets.map((asset: any) => [
       asset.asset_code || '',
       asset.name || '',
-      asset.category_name || '',
+      asset.category?.name || '',
       asset.brand || '',
       asset.model || '',
       getConditionText(asset.condition_status),
       getStatusText(asset.status),
-      asset.assigned_to_name || '-',
+      asset.assigned_to ? `${asset.assigned_to.first_name} ${asset.assigned_to.last_name}` : '-',
       asset.location || '-'
     ]);
 
@@ -4426,17 +4576,48 @@ app.get("/api/reports/assets/export-csv", authMiddleware, requirePermission(PERM
       query += " ORDER BY a.name ASC";
     }
 
-    const assets = await c.env.DB.prepare(query).bind(...params).all();
+    // Build Supabase query
+    let supaQuery = db
+      .from('assets')
+      .select(`
+        *,
+        category:asset_categories(name),
+        assigned_to:users(first_name, last_name, department)
+      `);
 
-    if (!assets.results || assets.results.length === 0) {
+    if (employeeId) {
+      supaQuery = supaQuery.eq('assigned_to_id', parseInt(employeeId));
+    } else {
+      if (categoryId) {
+        supaQuery = supaQuery.eq('category_id', parseInt(categoryId));
+      }
+      if (conditionStatus) {
+        supaQuery = supaQuery.eq('condition_status', conditionStatus);
+      }
+      if (operationalStatus) {
+        supaQuery = supaQuery.eq('status', operationalStatus);
+      }
+    }
+
+    const { data: assets, error: assetsErr } = await supaQuery.order('name', { ascending: true });
+
+    if (assetsErr) throw assetsErr;
+
+    if (!assets || assets.length === 0) {
       return c.json({ error: 'No se encontraron activos para exportar' }, 404);
+    }
+
+    // Filter by department if needed (post-fetch filter)
+    let filteredAssets = assets;
+    if (department && !employeeId) {
+      filteredAssets = assets.filter(a => a.assigned_to?.department === department);
     }
 
     // CSV Headers
     const headers = [
-      "Código de Activo", "Nombre", "Descripción", "Categoría", "Marca", "Modelo", 
-      "Número de Serie", "Fecha de Compra", "Costo de Compra", "Estado Operacional", 
-      "Estado de Condición", "Ubicación", "Asignado a", "Departamento", "Fecha de Asignación", 
+      "Código de Activo", "Nombre", "Descripción", "Categoría", "Marca", "Modelo",
+      "Número de Serie", "Fecha de Compra", "Costo de Compra", "Estado Operacional",
+      "Estado de Condición", "Ubicación", "Asignado a", "Departamento", "Fecha de Asignación",
       "Vencimiento de Garantía", "Notas"
     ].join(',');
 
@@ -4462,12 +4643,12 @@ app.get("/api/reports/assets/export-csv", authMiddleware, requirePermission(PERM
     };
 
     // CSV Rows
-    const csvRows = assets.results.map((asset: any) => {
+    const csvRows = filteredAssets.map((asset: any) => {
       const row = [
         asset.asset_code,
         asset.name,
         asset.description?.replace(/"/g, '""'), // Escape double quotes
-        asset.category_name,
+        asset.category?.name,
         asset.brand,
         asset.model,
         asset.serial_number,
@@ -4476,8 +4657,8 @@ app.get("/api/reports/assets/export-csv", authMiddleware, requirePermission(PERM
         getStatusText(asset.status),
         getConditionText(asset.condition_status),
         asset.location,
-        asset.assigned_to_name,
-        asset.employee_department,
+        asset.assigned_to ? `${asset.assigned_to.first_name} ${asset.assigned_to.last_name}` : '',
+        asset.assigned_to?.department,
         asset.assigned_date,
         asset.warranty_expiry_date,
         asset.notes?.replace(/"/g, '""') // Escape double quotes
@@ -4553,41 +4734,38 @@ app.get("/api/reports/employees/export-csv", authMiddleware, requirePermission(P
     const companyName = c.req.query('company_name');
     const sede = c.req.query('sede');
 
-    let query = `
-      SELECT id, first_name, last_name, email, ci, phone, department,
-             position, payroll_type, base_salary, birth_date, sede,
-             company_name, status, created_at
-      FROM users
-      WHERE role = 'EMPLOYEE'
-    `;
-    const params: (string | number)[] = [];
+    let supaQuery = db
+      .from('users')
+      .select(`
+        id, first_name, last_name, email, ci, phone, department,
+        position, payroll_type, base_salary, birth_date, sede,
+        company_name, status, created_at
+      `)
+      .eq('role', 'EMPLOYEE');
 
     if (status) {
-      query += " AND status = ?";
-      params.push(status);
+      supaQuery = supaQuery.eq('status', status);
     }
     if (department) {
-      query += " AND department = ?";
-      params.push(department);
+      supaQuery = supaQuery.eq('department', department);
     }
     if (payrollType) {
-      query += " AND payroll_type = ?";
-      params.push(payrollType);
+      supaQuery = supaQuery.eq('payroll_type', payrollType);
     }
     if (companyName) {
-      query += " AND company_name = ?";
-      params.push(companyName);
+      supaQuery = supaQuery.eq('company_name', companyName);
     }
     if (sede) {
-      query += " AND sede = ?";
-      params.push(sede);
+      supaQuery = supaQuery.eq('sede', sede);
     }
 
-    query += " ORDER BY first_name, last_name ASC";
+    const { data: employees, error: empErr } = await supaQuery
+      .order('first_name', { ascending: true })
+      .order('last_name', { ascending: true });
 
-    const employees = await c.env.DB.prepare(query).bind(...params).all();
+    if (empErr) throw empErr;
 
-    if (!employees.results || employees.results.length === 0) {
+    if (!employees || employees.length === 0) {
       return c.json({ error: 'No se encontraron empleados para exportar' }, 404);
     }
 
@@ -4599,7 +4777,7 @@ app.get("/api/reports/employees/export-csv", authMiddleware, requirePermission(P
     ].join(',');
 
     // CSV Rows
-    const csvRows = employees.results.map((employee: any) => {
+    const csvRows = employees.map((employee: any) => {
       const row = [
         employee.ci,
         employee.first_name,
@@ -4642,41 +4820,38 @@ app.get("/api/reports/employees/export-pdf", authMiddleware, requirePermission(P
     const companyName = c.req.query('company_name');
     const sede = c.req.query('sede');
 
-    let query = `
-      SELECT id, first_name, last_name, email, ci, phone, department,
-             position, payroll_type, base_salary, birth_date, sede,
-             company_name, status
-      FROM users
-      WHERE role = 'EMPLOYEE'
-    `;
-    const params: (string | number)[] = [];
+    let supaQuery = db
+      .from('users')
+      .select(`
+        id, first_name, last_name, email, ci, phone, department,
+        position, payroll_type, base_salary, birth_date, sede,
+        company_name, status
+      `)
+      .eq('role', 'EMPLOYEE');
 
     if (status) {
-      query += " AND status = ?";
-      params.push(status);
+      supaQuery = supaQuery.eq('status', status);
     }
     if (department) {
-      query += " AND department = ?";
-      params.push(department);
+      supaQuery = supaQuery.eq('department', department);
     }
     if (payrollType) {
-      query += " AND payroll_type = ?";
-      params.push(payrollType);
+      supaQuery = supaQuery.eq('payroll_type', payrollType);
     }
     if (companyName) {
-      query += " AND company_name = ?";
-      params.push(companyName);
+      supaQuery = supaQuery.eq('company_name', companyName);
     }
     if (sede) {
-      query += " AND sede = ?";
-      params.push(sede);
+      supaQuery = supaQuery.eq('sede', sede);
     }
 
-    query += " ORDER BY first_name, last_name ASC";
+    const { data: employees, error: empErr } = await supaQuery
+      .order('first_name', { ascending: true })
+      .order('last_name', { ascending: true });
 
-    const employees = await c.env.DB.prepare(query).bind(...params).all();
+    if (empErr) throw empErr;
 
-    if (!employees.results || employees.results.length === 0) {
+    if (!employees || employees.length === 0) {
       return c.json({ error: 'No se encontraron empleados para exportar' }, 404);
     }
 
@@ -4699,11 +4874,11 @@ app.get("/api/reports/employees/export-pdf", authMiddleware, requirePermission(P
     let yPos = 25;
     doc.text(`Fecha de generación: ${new Date().toLocaleDateString('es-ES')}`, 14, yPos);
     yPos += 6;
-    doc.text(`Total de empleados: ${employees.results.length}`, 14, yPos);
+    doc.text(`Total de empleados: ${employees.length}`, 14, yPos);
     yPos += 10;
 
     // Table data
-    const tableData = employees.results.map((employee: any) => [
+    const tableData = employees.map((employee: any) => [
       employee.ci || '',
       `${employee.first_name} ${employee.last_name}`,
       employee.email || '',
