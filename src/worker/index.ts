@@ -545,21 +545,20 @@ app.get("/api/dashboard/stats", authMiddleware, async (c) => {
 app.get("/api/birthdays", authMiddleware, async (c) => {
   try {
     const includeInactive = c.req.query('include_inactive') === 'true';
-    
-    let query = `
-      SELECT id, first_name, last_name, birth_date, department, position, photo_url, status, role
-      FROM users 
-      WHERE birth_date IS NOT NULL AND birth_date != ''
-    `;
-    
-    if (!includeInactive) {
-      query += " AND status = 'ACTIVE'";
-    }
-    
-    query += " ORDER BY first_name, last_name";
 
-    const birthdays = await c.env.DB.prepare(query).all();
-    return c.json(birthdays.results || []);
+    let query = db
+      .from('users')
+      .select('id, first_name, last_name, birth_date, department, position, photo_url, status, role')
+      .not('birth_date', 'is', null);
+
+    if (!includeInactive) {
+      query = query.eq('status', 'ACTIVE');
+    }
+
+    const { data: birthdays, error: err } = await query.order('first_name').order('last_name');
+
+    if (err) throw err;
+    return c.json(birthdays || []);
   } catch (error) {
     console.error('Error getting birthdays:', error);
     return c.json({ error: 'Failed to get birthdays' }, 500);
@@ -624,11 +623,13 @@ app.get("/api/employees", authMiddleware, async (c) => {
 app.get("/api/requests", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -637,20 +638,29 @@ app.get("/api/requests", authMiddleware, async (c) => {
     let requests;
     if (userProfile.role === 'HR' && hasPermission(userProfile as any, PERMISSIONS.REQUEST_VIEW_ALL)) {
       // HR can see all requests if they have the permission
-      requests = await c.env.DB.prepare(`
-        SELECT r.*, u.first_name, u.last_name, u.email
-        FROM requests r
-        JOIN users u ON r.user_id = u.id
-        ORDER BY r.created_at DESC
-      `).all();
+      const { data: allRequests, error: err } = await db
+        .from('requests')
+        .select(`
+          *,
+          user:users(first_name, last_name, email)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (err) throw err;
+      requests = allRequests || [];
     } else {
       // Regular employees can only see their own requests
-      requests = await c.env.DB.prepare(
-        "SELECT * FROM requests WHERE user_id = ? ORDER BY created_at DESC"
-      ).bind(userProfile.id).all();
+      const { data: userRequests, error: err } = await db
+        .from('requests')
+        .select('*')
+        .eq('user_id', userProfile.id)
+        .order('created_at', { ascending: false });
+
+      if (err) throw err;
+      requests = userRequests || [];
     }
 
-    return c.json(requests.results);
+    return c.json(requests);
   } catch (error) {
     console.error('Error getting requests:', error);
     return c.json({ error: 'Failed to get requests' }, 500);
@@ -661,34 +671,37 @@ app.get("/api/requests", authMiddleware, async (c) => {
 app.get("/api/documents", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role and department
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role, department FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('role, department')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    let query = `
-      SELECT d.*, u.first_name || ' ' || u.last_name as uploader_name
-      FROM documents d
-      JOIN users u ON d.uploaded_by_id = u.id
-    `;
+    let query = db
+      .from('documents')
+      .select(`
+        *,
+        uploader:users(first_name, last_name)
+      `)
+      .order('created_at', { ascending: false });
 
     if (userProfile.role !== 'HR') {
       // Regular employees can only see public documents or those for their department
-      query += ` WHERE (d.is_public = 1 OR d.department = ? OR d.department IS NULL)`;
+      query = query.or(
+        `is_public.eq.true,department.eq.${userProfile.department},department.is.null`
+      );
     }
 
-    query += ` ORDER BY d.created_at DESC`;
+    const { data: documents, error: err } = await query;
 
-    const documents = userProfile.role === 'HR' 
-      ? await c.env.DB.prepare(query).all()
-      : await c.env.DB.prepare(query).bind(userProfile.department).all();
-
-    return c.json(documents.results || []);
+    if (err) throw err;
+    return c.json(documents || []);
   } catch (error) {
     console.error('Error getting documents:', error);
     return c.json({ error: 'Failed to get documents' }, 500);
@@ -699,11 +712,13 @@ app.get("/api/documents", authMiddleware, async (c) => {
 app.get("/api/loans", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -712,20 +727,29 @@ app.get("/api/loans", authMiddleware, async (c) => {
     let loans;
     if (userProfile.role === 'HR') {
       // HR can see all loans
-      loans = await c.env.DB.prepare(`
-        SELECT l.*, u.first_name || ' ' || u.last_name as employee_name
-        FROM loans l
-        JOIN users u ON l.user_id = u.id
-        ORDER BY l.created_at DESC
-      `).all();
+      const { data: allLoans, error: err } = await db
+        .from('loans')
+        .select(`
+          *,
+          user:users(first_name, last_name)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (err) throw err;
+      loans = allLoans || [];
     } else {
       // Regular employees can only see their own loans
-      loans = await c.env.DB.prepare(
-        "SELECT * FROM loans WHERE user_id = ? ORDER BY created_at DESC"
-      ).bind(userProfile.id).all();
+      const { data: userLoans, error: err } = await db
+        .from('loans')
+        .select('*')
+        .eq('user_id', userProfile.id)
+        .order('created_at', { ascending: false });
+
+      if (err) throw err;
+      loans = userLoans || [];
     }
 
-    return c.json(loans.results || []);
+    return c.json(loans);
   } catch (error) {
     console.error('Error getting loans:', error);
     return c.json({ error: 'Failed to get loans' }, 500);
@@ -1044,54 +1068,56 @@ app.delete("/api/loans/:id", authMiddleware, requirePermission(PERMISSIONS.LOAN_
 app.get("/api/evaluations", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role and permissions
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const userId = (userProfile as any).id;
-    const isHR = (userProfile as any).role === 'HR';
+    const userId = userProfile.id;
+    const isHR = userProfile.role === 'HR';
 
     let evaluations;
     if (isHR && hasPermission(userProfile as any, PERMISSIONS.EVALUATION_VIEW_ALL)) {
       // HR with permission can see all evaluations
-      evaluations = await c.env.DB.prepare(`
-        SELECT e.*, 
-               emp.first_name || ' ' || emp.last_name as employee_name,
-               emp.department as employee_department,
-               eval.first_name || ' ' || eval.last_name as evaluator_name,
-               ec.title as cycle_title
-        FROM evaluations e
-        JOIN users emp ON e.employee_id = emp.id
-        JOIN users eval ON e.evaluator_id = eval.id
-        JOIN evaluation_cycles ec ON e.cycle_id = ec.id
-        ORDER BY e.created_at DESC
-      `).all();
+      const { data: allEvals, error: err } = await db
+        .from('evaluations')
+        .select(`
+          *,
+          employee:users!evaluations_employee_id_fkey(first_name, last_name, department),
+          evaluator:users!evaluations_evaluator_id_fkey(first_name, last_name),
+          cycle:evaluation_cycles(title)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (err) throw err;
+      evaluations = allEvals || [];
     } else {
       // Employees see:
       // 1. Their own evaluations (where they are the employee)
       // 2. Evaluations where they are the evaluator (manager evaluating their reports)
-      evaluations = await c.env.DB.prepare(`
-        SELECT e.*, 
-               emp.first_name || ' ' || emp.last_name as employee_name,
-               emp.department as employee_department,
-               eval.first_name || ' ' || eval.last_name as evaluator_name,
-               ec.title as cycle_title
-        FROM evaluations e
-        JOIN users emp ON e.employee_id = emp.id
-        JOIN users eval ON e.evaluator_id = eval.id
-        JOIN evaluation_cycles ec ON e.cycle_id = ec.id
-        WHERE e.employee_id = ? OR e.evaluator_id = ?
-        ORDER BY e.created_at DESC
-      `).bind(userId, userId).all();
+      const { data: userEvals, error: err } = await db
+        .from('evaluations')
+        .select(`
+          *,
+          employee:users!evaluations_employee_id_fkey(first_name, last_name, department),
+          evaluator:users!evaluations_evaluator_id_fkey(first_name, last_name),
+          cycle:evaluation_cycles(title)
+        `)
+        .or(`employee_id.eq.${userId},evaluator_id.eq.${userId}`)
+        .order('created_at', { ascending: false });
+
+      if (err) throw err;
+      evaluations = userEvals || [];
     }
 
-    return c.json(evaluations.results || []);
+    return c.json(evaluations);
   } catch (error) {
     console.error('Error getting evaluations:', error);
     return c.json({ error: 'Failed to get evaluations' }, 500);
@@ -1495,55 +1521,55 @@ app.put("/api/evaluation-cycles/:id/activate", authMiddleware, async (c) => {
 app.get("/api/events", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile with both department, sede, and role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, department, sede, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, department, sede, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
     // HR users see all events regardless of target_audience
-    let events;
+    let query;
     if (userProfile.role === 'HR') {
-      events = await c.env.DB.prepare(`
-        SELECT ce.*,
-               er.status as user_rsvp_status,
-               (SELECT COUNT(*) FROM event_rsvps WHERE event_id = ce.id AND status = 'ATTENDING') as rsvp_count
-        FROM corporate_events ce
-        LEFT JOIN event_rsvps er ON ce.id = er.event_id AND er.user_id = ?
-        ORDER BY ce.start_date ASC
-      `).bind(userProfile.id).all();
+      query = db
+        .from('corporate_events')
+        .select(`
+          *,
+          rsvp:event_rsvp(status, user_id)
+        `)
+        .order('start_date', { ascending: true });
     } else {
-      // Regular employees see events targeted to them via department or sede
-      events = await c.env.DB.prepare(`
-        SELECT ce.*,
-               er.status as user_rsvp_status,
-               (SELECT COUNT(*) FROM event_rsvps WHERE event_id = ce.id AND status = 'ATTENDING') as rsvp_count
-        FROM corporate_events ce
-        LEFT JOIN event_rsvps er ON ce.id = er.event_id AND er.user_id = ?
-        WHERE ce.target_audience IS NULL 
-           OR ce.target_audience = 'ALL'
-           OR ce.target_audience = ?
-           OR ce.target_audience = ?
-        ORDER BY ce.start_date ASC
-      `).bind(userProfile.id, userProfile.department, userProfile.sede).all();
+      // Regular employees see events targeted to them
+      query = db
+        .from('corporate_events')
+        .select(`
+          *,
+          rsvp:event_rsvp(status, user_id)
+        `)
+        .or(
+          `target_audience.is.null,target_audience.eq.ALL,target_audience.eq.${userProfile.department},target_audience.eq.${userProfile.sede}`
+        )
+        .order('start_date', { ascending: true });
     }
 
-    // Transform the results to include proper RSVP object
-    const transformedEvents = (events.results || []).map((event: any) => ({
-      ...event,
-      user_rsvp: event.user_rsvp_status ? {
-        id: 1, // placeholder
-        event_id: event.id,
-        user_id: userProfile.id,
-        status: event.user_rsvp_status,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      } : null
-    }));
+    const { data: events, error: err } = await query;
+
+    if (err) throw err;
+
+    // Transform the results to include proper RSVP info
+    const transformedEvents = (events || []).map((event: any) => {
+      const userRsvp = event.rsvp?.find((r: any) => r.user_id === userProfile.id);
+      return {
+        ...event,
+        rsvp_count: event.rsvp?.filter((r: any) => r.status === 'ATTENDING').length || 0,
+        user_rsvp: userRsvp || null
+      };
+    });
 
     return c.json(transformedEvents);
   } catch (error) {
