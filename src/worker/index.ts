@@ -7140,4 +7140,255 @@ app.get('/api/logout', async (c) => {
   }
 });
 
+// ============================================
+// ATTENDANCE ENDPOINTS - Asistencia
+// ============================================
+
+// GET /api/attendance/employee/:id - Ver asistencia personal
+app.get("/api/attendance/employee/:id", authMiddleware, async (c) => {
+  try {
+    const employeeId = parseInt(c.req.param('id'));
+    const daysBack = parseInt(c.req.query('days') || '30');
+    const mochaUser = c.get("user") as MochaUser;
+
+    // Verificar permisos (ver propia asistencia o ser HR)
+    const { data: requester, error: reqErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
+
+    if (!requester) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Solo pueden ver su propia asistencia o ser HR
+    if (requester.role !== 'HR' && requester.id !== employeeId) {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - daysBack);
+
+    const { data: records, error } = await db
+      .from('attendance_records')
+      .select('*')
+      .eq('user_id', employeeId)
+      .gte('date', startDate.toISOString().split('T')[0])
+      .order('date', { ascending: false });
+
+    if (error) throw error;
+
+    return c.json(records || []);
+  } catch (error) {
+    console.error('Error fetching attendance:', error);
+    return c.json({ error: 'Failed to fetch attendance' }, 500);
+  }
+});
+
+// GET /api/attendance/summary - Resumen de asistencia del mes actual
+app.get("/api/attendance/summary", authMiddleware, async (c) => {
+  try {
+    const mochaUser = c.get("user") as MochaUser;
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
+
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const now = new Date();
+    const yearMonth = now.toISOString().split('T')[0].substring(0, 7);
+
+    const { data: summary, error } = await db
+      .from('attendance_monthly_summary')
+      .select('*')
+      .eq('user_id', userProfile.id)
+      .eq('year_month', `${yearMonth}-01`)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+
+    return c.json(summary || {
+      user_id: userProfile.id,
+      total_days_worked: 0,
+      total_absences: 0,
+      total_lates: 0,
+      total_hours_worked: 0,
+      average_hours_per_day: 0,
+    });
+  } catch (error) {
+    console.error('Error fetching attendance summary:', error);
+    return c.json({ error: 'Failed to fetch summary' }, 500);
+  }
+});
+
+// GET /api/attendance/today - Asistencia de hoy
+app.get("/api/attendance/today", authMiddleware, async (c) => {
+  try {
+    const mochaUser = c.get("user") as MochaUser;
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
+
+    if (!userProfile) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    const { data: todayAttendance, error } = await db
+      .from('attendance_records')
+      .select('*')
+      .eq('user_id', userProfile.id)
+      .eq('date', today)
+      .single();
+
+    if (error && error.code !== 'PGRST116') throw error;
+
+    return c.json(todayAttendance || { status: 'NO_DATA' });
+  } catch (error) {
+    console.error('Error fetching today attendance:', error);
+    return c.json({ error: 'Failed to fetch today attendance' }, 500);
+  }
+});
+
+// GET /api/reports/attendance - Reporte de asistencia (HR only)
+app.get("/api/reports/attendance", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE_VIEW), async (c) => {
+  try {
+    const month = parseInt(c.req.query('month') || String(new Date().getMonth() + 1));
+    const year = parseInt(c.req.query('year') || String(new Date().getFullYear()));
+    const department = c.req.query('department');
+
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endDate = new Date(year, month, 0).toISOString().split('T')[0];
+
+    let query = db
+      .from('attendance_records')
+      .select(`
+        *,
+        user:users(id, first_name, last_name, department, position)
+      `)
+      .gte('date', startDate)
+      .lte('date', endDate);
+
+    if (department) {
+      query = query.eq('user.department', department);
+    }
+
+    const { data: records, error } = await query.order('date', { ascending: false });
+
+    if (error) throw error;
+
+    // Calcular estadísticas
+    const stats = {
+      total_employees: new Set((records || []).map(r => r.user_id)).size,
+      presents: (records || []).filter(r => r.status === 'PRESENT').length,
+      lates: (records || []).filter(r => r.status === 'LATE').length,
+      absents: (records || []).filter(r => r.status === 'ABSENT').length,
+      early_leaves: (records || []).filter(r => r.status === 'EARLY_LEAVE').length,
+      total_hours_worked: (records || []).reduce((sum, r) => sum + (r.hours_worked || 0), 0),
+      average_hours: 0,
+    };
+
+    if (stats.total_employees > 0) {
+      stats.average_hours = Math.round((stats.total_hours_worked / stats.total_employees) * 100) / 100;
+    }
+
+    return c.json({ records: records || [], stats });
+  } catch (error) {
+    console.error('Error generating attendance report:', error);
+    return c.json({ error: 'Failed to generate report' }, 500);
+  }
+});
+
+// POST /api/attendance/manual - Registrar asistencia manual (HR only)
+app.post("/api/attendance/manual", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE_VIEW), async (c) => {
+  try {
+    const mochaUser = c.get("user") as MochaUser;
+    const { user_id, date, check_in, check_out, status, notes } = await c.req.json();
+
+    const { data: requester, error: reqErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
+
+    if (!requester) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Calcular horas trabajadas
+    let hoursWorked = null;
+    if (check_in && check_out) {
+      const checkInTime = new Date(check_in).getTime();
+      const checkOutTime = new Date(check_out).getTime();
+      hoursWorked = (checkOutTime - checkInTime) / (1000 * 60 * 60);
+    }
+
+    const { data: record, error } = await db
+      .from('attendance_records')
+      .upsert({
+        user_id,
+        date,
+        check_in: check_in ? new Date(check_in).toISOString() : null,
+        check_out: check_out ? new Date(check_out).toISOString() : null,
+        hours_worked: hoursWorked,
+        status: status || 'PRESENT',
+        notes,
+        source: 'MANUAL',
+        manually_registered_by: requester.id,
+        synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'user_id,date'
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Log audit
+    await db.from('employee_audit_log').insert({
+      user_id: requester.id,
+      action: `MANUAL_ATTENDANCE_REGISTER`,
+      target_user_id: user_id,
+      details: { date, status, notes },
+      created_at: new Date().toISOString(),
+    });
+
+    return c.json(record);
+  } catch (error) {
+    console.error('Error registering manual attendance:', error);
+    return c.json({ error: 'Failed to register attendance' }, 500);
+  }
+});
+
+// GET /api/attendance/departments - Listado de departamentos para filtrado
+app.get("/api/attendance/departments", authMiddleware, async (c) => {
+  try {
+    const { data: departments, error } = await db
+      .from('users')
+      .select('department')
+      .not('department', 'is', null)
+      .neq('department', '')
+      .order('department');
+
+    if (error) throw error;
+
+    const unique = [...new Set((departments || []).map(d => d.department))];
+    return c.json(unique);
+  } catch (error) {
+    console.error('Error fetching departments:', error);
+    return c.json({ error: 'Failed to fetch departments' }, 500);
+  }
+});
+
 export default app;

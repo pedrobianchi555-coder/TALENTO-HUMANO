@@ -23,6 +23,7 @@ import WhatsAppSettings from "@/react-app/pages/WhatsAppSettings";
 import BackupManagement from "@/react-app/pages/BackupManagement";
 import AuditLog from "@/react-app/pages/AuditLog";
 import RequestResponseDashboard from "@/react-app/pages/RequestResponseDashboard";
+import AttendanceDashboard from "@/react-app/pages/AttendanceDashboard";
 
 export default function App() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/backups" element={<AppLayout><BackupManagement /></AppLayout>} />
           <Route path="/audit-log" element={<AppLayout><AuditLog /></AppLayout>} />
           <Route path="/request-reports" element={<AppLayout><RequestResponseDashboard /></AppLayout>} />
+          <Route path="/attendance" element={<AppLayout><AttendanceDashboard /></AppLayout>} />
         </Routes>
       </Router>
     </AuthProvider>
