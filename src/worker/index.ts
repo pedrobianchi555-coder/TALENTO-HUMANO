@@ -2420,35 +2420,42 @@ app.delete("/api/employees/:id", authMiddleware, rateLimiter(RateLimits.SENSITIV
 app.get("/api/candidates", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const candidates = await c.env.DB.prepare(`
-      SELECT c.*, 
-             COUNT(i.id) as interview_count
-      FROM candidates c
-      LEFT JOIN interviews i ON c.id = i.candidate_id
-      GROUP BY c.id
-      ORDER BY c.created_at DESC
-    `).all();
+    // Get all candidates ordered by creation date
+    const { data: candidates, error: candidatesErr } = await db
+      .from('candidates')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (candidatesErr) throw candidatesErr;
 
     // Get interviews for each candidate
     const candidatesWithInterviews = await Promise.all(
-      (candidates.results || []).map(async (candidate: any) => {
-        const interviews = await c.env.DB.prepare(
-          "SELECT * FROM interviews WHERE candidate_id = ? ORDER BY date DESC, time DESC"
-        ).bind(candidate.id).all();
+      (candidates || []).map(async (candidate) => {
+        const { data: interviews, error: interviewErr } = await db
+          .from('interviews')
+          .select('*')
+          .eq('candidate_id', candidate.id)
+          .order('date', { ascending: false })
+          .order('time', { ascending: false });
+
+        if (interviewErr) throw interviewErr;
 
         return {
           ...candidate,
-          interviews: interviews.results || []
+          interview_count: interviews?.length || 0,
+          interviews: interviews || []
         };
       })
     );
@@ -2536,11 +2543,13 @@ app.get("/api/ai/test", authMiddleware, async (c) => {
 app.post("/api/candidates", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -2556,24 +2565,30 @@ app.post("/api/candidates", authMiddleware, async (c) => {
 
     console.log('Creating candidate with resume text length:', resume_text.length);
 
-    // Create candidate in database without AI analysis
-    const result = await c.env.DB.prepare(`
-      INSERT INTO candidates (
-        first_name, last_name, email, phone, position, department,
-        status, resume_url, resume_text, ai_profile, application_date
-      ) VALUES ('Pendiente', 'Análisis', NULL, NULL, 'Pendiente análisis', NULL, 'APPLIED', ?, ?, 'Análisis de IA pendiente', ?)
-    `).bind(
-      resume_url,
-      resume_text,
-      application_date
-    ).run();
+    // Create candidate in database
+    const { data: newCandidate, error: insertErr } = await db
+      .from('candidates')
+      .insert({
+        first_name: 'Pendiente',
+        last_name: 'Análisis',
+        email: null,
+        phone: null,
+        position: 'Pendiente análisis',
+        department: null,
+        status: 'APPLIED',
+        resume_url,
+        resume_text,
+        ai_profile: 'Análisis de IA pendiente',
+        application_date,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select('*')
+      .single();
 
-    console.log('Candidate created with ID:', result.meta.last_row_id);
+    if (insertErr) throw insertErr;
 
-    // Get the created candidate
-    const newCandidate = await c.env.DB.prepare(
-      "SELECT * FROM candidates WHERE id = ?"
-    ).bind(result.meta.last_row_id).first();
+    console.log('Candidate created with ID:', newCandidate.id);
 
     return c.json({
       ...newCandidate,
@@ -2590,11 +2605,13 @@ app.post("/api/candidates/:id/process-ai", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const candidateId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -2605,15 +2622,17 @@ app.post("/api/candidates/:id/process-ai", authMiddleware, async (c) => {
     }
 
     // Get candidate
-    const candidate = await c.env.DB.prepare(
-      "SELECT * FROM candidates WHERE id = ?"
-    ).bind(candidateId).first();
+    const { data: candidate, error: candidateErr } = await db
+      .from('candidates')
+      .select('*')
+      .eq('id', candidateId)
+      .single();
 
-    if (!candidate) {
+    if (!candidate || candidateErr) {
       return c.json({ error: 'Candidate not found' }, 404);
     }
 
-    const resume_text = (candidate as any).resume_text;
+    const resume_text = candidate.resume_text;
 
     if (!resume_text || resume_text.trim().length < 50) {
       return c.json({ error: 'El texto del CV es demasiado corto para análisis de IA' }, 400);
@@ -2622,9 +2641,14 @@ app.post("/api/candidates/:id/process-ai", authMiddleware, async (c) => {
     console.log('Processing candidate AI analysis with text length:', resume_text.length);
 
     // Update candidate status to show processing
-    await c.env.DB.prepare(
-      "UPDATE candidates SET first_name = 'Procesando', last_name = 'con IA...', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).bind(candidateId).run();
+    await db
+      .from('candidates')
+      .update({
+        first_name: 'Procesando',
+        last_name: 'con IA...',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', candidateId);
 
     try {
       console.log('Creating OpenAI service...');
@@ -2717,28 +2741,32 @@ JSON format:
       });
 
       // Update candidate in database
-      await c.env.DB.prepare(`
-        UPDATE candidates SET
-          first_name = ?, last_name = ?, email = ?, phone = ?, 
-          position = ?, department = ?, ai_profile = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(
-        firstName,
-        lastName,
-        email,
-        phone,
-        position,
-        department,
-        profile,
-        candidateId
-      ).run();
+      const { error: updateErr } = await db
+        .from('candidates')
+        .update({
+          first_name: firstName,
+          last_name: lastName,
+          email,
+          phone,
+          position,
+          department,
+          ai_profile: profile,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', candidateId);
+
+      if (updateErr) throw updateErr;
 
       console.log('Candidate updated with AI data');
 
       // Get the updated candidate
-      const updatedCandidate = await c.env.DB.prepare(
-        "SELECT * FROM candidates WHERE id = ?"
-      ).bind(candidateId).first();
+      const { data: updatedCandidate, error: selectErr } = await db
+        .from('candidates')
+        .select('*')
+        .eq('id', candidateId)
+        .single();
+
+      if (selectErr) throw selectErr;
 
       return c.json({
         ...updatedCandidate,
@@ -2765,20 +2793,18 @@ JSON format:
       }
       
       // Update candidate with error status and detailed error info
-      await c.env.DB.prepare(`
-        UPDATE candidates SET
-          first_name = 'Error', last_name = 'de IA', 
-          ai_profile = ?, 
-          notes = ?, 
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(
-        `Error: ${userFriendlyMessage}`,
-        `Error técnico: ${errorMessage}. Timestamp: ${new Date().toISOString()}`,
-        candidateId
-      ).run();
-      
-      return c.json({ 
+      await db
+        .from('candidates')
+        .update({
+          first_name: 'Error',
+          last_name: 'de IA',
+          ai_profile: `Error: ${userFriendlyMessage}`,
+          notes: `Error técnico: ${errorMessage}. Timestamp: ${new Date().toISOString()}`,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', candidateId);
+
+      return c.json({
         error: userFriendlyMessage
       }, 500);
     }
@@ -2793,45 +2819,63 @@ app.put("/api/candidates/:id", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const candidateId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
     const {
-      first_name, last_name, email, phone, position, 
+      first_name, last_name, email, phone, position,
       department, ai_profile, notes, status
     } = await c.req.json();
 
     // Update candidate
-    await c.env.DB.prepare(`
-      UPDATE candidates SET
-        first_name = ?, last_name = ?, email = ?, phone = ?, 
-        position = ?, department = ?, ai_profile = ?, notes = ?,
-        status = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(
-      first_name, last_name, email, phone, position,
-      department, ai_profile, notes, status, candidateId
-    ).run();
+    const { error: updateErr } = await db
+      .from('candidates')
+      .update({
+        first_name,
+        last_name,
+        email,
+        phone,
+        position,
+        department,
+        ai_profile,
+        notes,
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', candidateId);
+
+    if (updateErr) throw updateErr;
 
     // Get the updated candidate with interviews
-    const updatedCandidate = await c.env.DB.prepare(
-      "SELECT * FROM candidates WHERE id = ?"
-    ).bind(candidateId).first();
+    const { data: updatedCandidate, error: selectErr } = await db
+      .from('candidates')
+      .select('*')
+      .eq('id', candidateId)
+      .single();
 
-    const interviews = await c.env.DB.prepare(
-      "SELECT * FROM interviews WHERE candidate_id = ? ORDER BY date DESC, time DESC"
-    ).bind(candidateId).all();
+    if (selectErr) throw selectErr;
+
+    const { data: interviews, error: interviewErr } = await db
+      .from('interviews')
+      .select('*')
+      .eq('candidate_id', candidateId)
+      .order('date', { ascending: false })
+      .order('time', { ascending: false });
+
+    if (interviewErr) throw interviewErr;
 
     return c.json({
       ...updatedCandidate,
-      interviews: interviews.results || []
+      interviews: interviews || []
     });
   } catch (error) {
     console.error('Error updating candidate:', error);
@@ -2844,21 +2888,33 @@ app.delete("/api/candidates/:id", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const candidateId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    // Delete related interviews first
-    await c.env.DB.prepare("DELETE FROM interviews WHERE candidate_id = ?").bind(candidateId).run();
-    
+    // Delete related interviews first (cascade delete)
+    const { error: interviewErr } = await db
+      .from('interviews')
+      .delete()
+      .eq('candidate_id', candidateId);
+
+    if (interviewErr) throw interviewErr;
+
     // Delete candidate
-    await c.env.DB.prepare("DELETE FROM candidates WHERE id = ?").bind(candidateId).run();
+    const { error: deleteErr } = await db
+      .from('candidates')
+      .delete()
+      .eq('id', candidateId);
+
+    if (deleteErr) throw deleteErr;
 
     return c.json({ success: true });
   } catch (error) {
@@ -2931,11 +2987,13 @@ Return up to 5 candidates ordered by relevance. If no candidates match well, ret
 app.post("/api/interviews", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -2946,20 +3004,29 @@ app.post("/api/interviews", authMiddleware, async (c) => {
       location, meeting_link, notes, feedback, rating, status
     } = await c.req.json();
 
-    const result = await c.env.DB.prepare(`
-      INSERT INTO interviews (
-        candidate_id, type, date, time, duration_minutes, interviewer,
-        location, meeting_link, notes, feedback, rating, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      candidate_id, type, date, time, duration_minutes, interviewer,
-      location, meeting_link, notes, feedback, rating, status
-    ).run();
+    // Create interview
+    const { data: newInterview, error: insertErr } = await db
+      .from('interviews')
+      .insert({
+        candidate_id,
+        type,
+        date,
+        time,
+        duration_minutes,
+        interviewer,
+        location,
+        meeting_link,
+        notes,
+        feedback,
+        rating,
+        status,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select('*')
+      .single();
 
-    // Get the created interview
-    const newInterview = await c.env.DB.prepare(
-      "SELECT * FROM interviews WHERE id = ?"
-    ).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
     return c.json(newInterview);
   } catch (error) {
@@ -2973,11 +3040,13 @@ app.put("/api/interviews/:id", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const interviewId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -2988,21 +3057,35 @@ app.put("/api/interviews/:id", authMiddleware, async (c) => {
       location, meeting_link, notes, feedback, rating, status
     } = await c.req.json();
 
-    await c.env.DB.prepare(`
-      UPDATE interviews SET
-        type = ?, date = ?, time = ?, duration_minutes = ?, interviewer = ?,
-        location = ?, meeting_link = ?, notes = ?, feedback = ?, rating = ?, 
-        status = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(
-      type, date, time, duration_minutes, interviewer,
-      location, meeting_link, notes, feedback, rating, status, interviewId
-    ).run();
+    // Update interview
+    const { error: updateErr } = await db
+      .from('interviews')
+      .update({
+        type,
+        date,
+        time,
+        duration_minutes,
+        interviewer,
+        location,
+        meeting_link,
+        notes,
+        feedback,
+        rating,
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', interviewId);
+
+    if (updateErr) throw updateErr;
 
     // Get the updated interview
-    const updatedInterview = await c.env.DB.prepare(
-      "SELECT * FROM interviews WHERE id = ?"
-    ).bind(interviewId).first();
+    const { data: updatedInterview, error: selectErr } = await db
+      .from('interviews')
+      .select('*')
+      .eq('id', interviewId)
+      .single();
+
+    if (selectErr) throw selectErr;
 
     return c.json(updatedInterview);
   } catch (error) {
@@ -3216,11 +3299,14 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
 // Get asset categories
 app.get("/api/asset-categories", authMiddleware, async (c) => {
   try {
-    const categories = await c.env.DB.prepare(
-      "SELECT * FROM asset_categories ORDER BY name"
-    ).all();
+    const { data: categories, error: categoriesErr } = await db
+      .from('asset_categories')
+      .select('*')
+      .order('name', { ascending: true });
 
-    return c.json(categories.results || []);
+    if (categoriesErr) throw categoriesErr;
+
+    return c.json(categories || []);
   } catch (error) {
     console.error('Error getting asset categories:', error);
     return c.json({ error: 'Failed to get asset categories' }, 500);
@@ -3231,11 +3317,13 @@ app.get("/api/asset-categories", authMiddleware, async (c) => {
 app.get("/api/assets", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -3243,34 +3331,75 @@ app.get("/api/assets", authMiddleware, async (c) => {
 
     let assets;
     if (userProfile.role === 'HR') {
-      // HR can see all assets
-      assets = await c.env.DB.prepare(`
-        SELECT a.*, 
-               ac.name as category_name,
-               u.first_name || ' ' || u.last_name as assigned_to_name,
-               u.email as assigned_to_email,
-               (SELECT COUNT(*) FROM asset_assignments WHERE asset_id = a.id) as assignment_count,
-               (SELECT COUNT(*) FROM asset_maintenance WHERE asset_id = a.id) as maintenance_count
-        FROM assets a
-        JOIN asset_categories ac ON a.category_id = ac.id
-        LEFT JOIN users u ON a.assigned_to_id = u.id
-        ORDER BY a.created_at DESC
-      `).all();
+      // HR can see all assets with relationships
+      const { data: allAssets, error: assetsErr } = await db
+        .from('assets')
+        .select(`
+          *,
+          asset_categories (name as category_name),
+          assigned_user:users!assets_assigned_to_id_fkey (first_name, last_name, email)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (assetsErr) throw assetsErr;
+
+      // Add counts for each asset
+      assets = await Promise.all(
+        (allAssets || []).map(async (asset) => {
+          const { count: assignmentCount } = await db
+            .from('asset_assignments')
+            .select('*', { count: 'exact', head: true })
+            .eq('asset_id', asset.id);
+
+          const { count: maintenanceCount } = await db
+            .from('asset_maintenance')
+            .select('*', { count: 'exact', head: true })
+            .eq('asset_id', asset.id);
+
+          return {
+            ...asset,
+            assignment_count: assignmentCount || 0,
+            maintenance_count: maintenanceCount || 0
+          };
+        })
+      );
     } else {
       // Regular employees can only see their assigned assets
-      assets = await c.env.DB.prepare(`
-        SELECT a.*, 
-               ac.name as category_name,
-               (SELECT COUNT(*) FROM asset_assignments WHERE asset_id = a.id AND user_id = ?) as assignment_count,
-               (SELECT COUNT(*) FROM asset_maintenance WHERE asset_id = a.id) as maintenance_count
-        FROM assets a
-        JOIN asset_categories ac ON a.category_id = ac.id
-        WHERE a.assigned_to_id = ?
-        ORDER BY a.created_at DESC
-      `).bind(userProfile.id, userProfile.id).all();
+      const { data: userAssets, error: assetsErr } = await db
+        .from('assets')
+        .select(`
+          *,
+          asset_categories (name as category_name)
+        `)
+        .eq('assigned_to_id', userProfile.id)
+        .order('created_at', { ascending: false });
+
+      if (assetsErr) throw assetsErr;
+
+      // Add counts for each asset
+      assets = await Promise.all(
+        (userAssets || []).map(async (asset) => {
+          const { count: assignmentCount } = await db
+            .from('asset_assignments')
+            .select('*', { count: 'exact', head: true })
+            .eq('asset_id', asset.id)
+            .eq('user_id', userProfile.id);
+
+          const { count: maintenanceCount } = await db
+            .from('asset_maintenance')
+            .select('*', { count: 'exact', head: true })
+            .eq('asset_id', asset.id);
+
+          return {
+            ...asset,
+            assignment_count: assignmentCount || 0,
+            maintenance_count: maintenanceCount || 0
+          };
+        })
+      );
     }
 
-    return c.json(assets.results || []);
+    return c.json(assets || []);
   } catch (error) {
     console.error('Error getting assets:', error);
     return c.json({ error: 'Failed to get assets' }, 500);
@@ -3281,11 +3410,13 @@ app.get("/api/assets", authMiddleware, async (c) => {
 app.post("/api/assets", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -3308,24 +3439,34 @@ app.post("/api/assets", authMiddleware, async (c) => {
     } = await c.req.json();
 
     // Create asset
-    const result = await c.env.DB.prepare(`
-      INSERT INTO assets (
-        asset_code, name, description, category_id, brand, model, serial_number,
-        purchase_date, purchase_cost, location, warranty_expiry_date,
-        notes, invoice_url, status, condition_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'AVAILABLE', 'GOOD', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).bind(
-      asset_code, name, description, category_id, brand, model, serial_number,
-      purchase_date, purchase_cost, location, warranty_expiry_date, notes, invoice_url,
-    ).run();
+    const { data: asset, error: insertErr } = await db
+      .from('assets')
+      .insert({
+        asset_code,
+        name,
+        description,
+        category_id,
+        brand,
+        model,
+        serial_number,
+        purchase_date,
+        purchase_cost,
+        location,
+        warranty_expiry_date,
+        notes,
+        invoice_url,
+        status: 'AVAILABLE',
+        condition_status: 'GOOD',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select(`
+        *,
+        asset_categories (name as category_name)
+      `)
+      .single();
 
-    // Get the created asset with category name
-    const asset = await c.env.DB.prepare(`
-      SELECT a.*, ac.name as category_name
-      FROM assets a
-      JOIN asset_categories ac ON a.category_id = ac.id
-      WHERE a.id = ?
-    `).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
     return c.json(asset);
   } catch (error) {
@@ -3339,11 +3480,13 @@ app.put("/api/assets/:id", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const assetId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -3368,34 +3511,59 @@ app.put("/api/assets/:id", authMiddleware, async (c) => {
     } = await c.req.json();
 
     // Update asset
-    await c.env.DB.prepare(`
-      UPDATE assets SET
-        asset_code = ?, name = ?, description = ?, category_id = ?, brand = ?, model = ?,
-        serial_number = ?, purchase_date = ?, purchase_cost = ?, 
-        location = ?, warranty_expiry_date = ?, notes = ?, condition_status = ?, status = ?,
-        invoice_url = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(
-      asset_code, name, description, category_id, brand, model,
-      serial_number, purchase_date, purchase_cost, 
-      location, warranty_expiry_date, notes, condition_status, status, invoice_url, assetId
-    ).run();
+    const { error: updateErr } = await db
+      .from('assets')
+      .update({
+        asset_code,
+        name,
+        description,
+        category_id,
+        brand,
+        model,
+        serial_number,
+        purchase_date,
+        purchase_cost,
+        location,
+        warranty_expiry_date,
+        notes,
+        condition_status,
+        status,
+        invoice_url,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', assetId);
 
-    // Get the updated asset with category name and assignment info
-    const asset = await c.env.DB.prepare(`
-      SELECT a.*, 
-             ac.name as category_name,
-             u.first_name || ' ' || u.last_name as assigned_to_name,
-             u.email as assigned_to_email,
-             (SELECT COUNT(*) FROM asset_assignments WHERE asset_id = a.id) as assignment_count,
-             (SELECT COUNT(*) FROM asset_maintenance WHERE asset_id = a.id) as maintenance_count
-      FROM assets a
-      JOIN asset_categories ac ON a.category_id = ac.id
-      LEFT JOIN users u ON a.assigned_to_id = u.id
-      WHERE a.id = ?
-    `).bind(assetId).first();
+    if (updateErr) throw updateErr;
 
-    return c.json(asset);
+    // Get the updated asset with category and assignment info
+    const { data: asset, error: selectErr } = await db
+      .from('assets')
+      .select(`
+        *,
+        asset_categories (name as category_name),
+        assigned_user:users!assets_assigned_to_id_fkey (first_name, last_name, email)
+      `)
+      .eq('id', assetId)
+      .single();
+
+    if (selectErr) throw selectErr;
+
+    // Get counts
+    const { count: assignmentCount } = await db
+      .from('asset_assignments')
+      .select('*', { count: 'exact', head: true })
+      .eq('asset_id', assetId);
+
+    const { count: maintenanceCount } = await db
+      .from('asset_maintenance')
+      .select('*', { count: 'exact', head: true })
+      .eq('asset_id', assetId);
+
+    return c.json({
+      ...asset,
+      assignment_count: assignmentCount || 0,
+      maintenance_count: maintenanceCount || 0
+    });
   } catch (error) {
     console.error('Error updating asset:', error);
     return c.json({ error: 'Failed to update asset' }, 500);
@@ -3406,11 +3574,13 @@ app.put("/api/assets/:id", authMiddleware, async (c) => {
 app.post("/api/asset-assignments", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -3419,23 +3589,35 @@ app.post("/api/asset-assignments", authMiddleware, async (c) => {
     const { asset_id, user_id, assigned_date, assignment_notes } = await c.req.json();
 
     // Create assignment
-    const result = await c.env.DB.prepare(`
-      INSERT INTO asset_assignments (
-        asset_id, user_id, assigned_by_id, assigned_date, assignment_notes, status
-      ) VALUES (?, ?, ?, ?, ?, 'ACTIVE')
-    `).bind(asset_id, user_id, userProfile.id, assigned_date, assignment_notes).run();
+    const { data: assignment, error: insertErr } = await db
+      .from('asset_assignments')
+      .insert({
+        asset_id,
+        user_id,
+        assigned_by_id: userProfile.id,
+        assigned_date,
+        assignment_notes,
+        status: 'ACTIVE',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select('*')
+      .single();
+
+    if (insertErr) throw insertErr;
 
     // Update asset status and assigned_to_id
-    await c.env.DB.prepare(`
-      UPDATE assets SET 
-        status = 'ASSIGNED', 
-        assigned_to_id = ?, 
-        assigned_date = ?,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(user_id, assigned_date, asset_id).run();
+    await db
+      .from('assets')
+      .update({
+        status: 'ASSIGNED',
+        assigned_to_id: user_id,
+        assigned_date,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', asset_id);
 
-    return c.json({ success: true, assignment_id: result.meta.last_row_id });
+    return c.json({ success: true, assignment_id: assignment.id });
   } catch (error) {
     console.error('Error creating asset assignment:', error);
     return c.json({ error: 'Failed to create asset assignment' }, 500);
@@ -3447,11 +3629,13 @@ app.put("/api/assets/:id/return", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const assetId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -3460,24 +3644,31 @@ app.put("/api/assets/:id/return", authMiddleware, async (c) => {
     const { return_date, return_notes } = await c.req.json();
 
     // Update active assignment
-    await c.env.DB.prepare(`
-      UPDATE asset_assignments SET 
-        status = 'RETURNED',
-        return_date = ?,
-        return_notes = ?,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE asset_id = ? AND status = 'ACTIVE'
-    `).bind(return_date, return_notes, assetId).run();
+    const { error: assignmentErr } = await db
+      .from('asset_assignments')
+      .update({
+        status: 'RETURNED',
+        return_date,
+        return_notes,
+        updated_at: new Date().toISOString()
+      })
+      .eq('asset_id', assetId)
+      .eq('status', 'ACTIVE');
+
+    if (assignmentErr) throw assignmentErr;
 
     // Update asset status
-    await c.env.DB.prepare(`
-      UPDATE assets SET 
-        status = 'AVAILABLE',
-        assigned_to_id = NULL,
-        assigned_date = NULL,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(assetId).run();
+    const { error: assetErr } = await db
+      .from('assets')
+      .update({
+        status: 'AVAILABLE',
+        assigned_to_id: null,
+        assigned_date: null,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', assetId);
+
+    if (assetErr) throw assetErr;
 
     return c.json({ success: true });
   } catch (error) {
@@ -3490,11 +3681,13 @@ app.put("/api/assets/:id/return", authMiddleware, async (c) => {
 app.post("/api/asset-maintenance", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -3512,28 +3705,40 @@ app.post("/api/asset-maintenance", authMiddleware, async (c) => {
     } = await c.req.json();
 
     // Create maintenance record
-    const result = await c.env.DB.prepare(`
-      INSERT INTO asset_maintenance (
-        asset_id, maintenance_type, description, maintenance_date, cost,
-        performed_by, next_maintenance_date, notes, created_by_id, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SCHEDULED')
-    `).bind(
-      asset_id, maintenance_type, description, maintenance_date, cost,
-      performed_by, next_maintenance_date, notes, userProfile.id
-    ).run();
+    const { data: maintenance, error: insertErr } = await db
+      .from('asset_maintenance')
+      .insert({
+        asset_id,
+        maintenance_type,
+        description,
+        maintenance_date,
+        cost,
+        performed_by,
+        next_maintenance_date,
+        notes,
+        created_by_id: userProfile.id,
+        status: 'SCHEDULED',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select('*')
+      .single();
 
-    // Temporarily update asset status if maintenance is scheduled for today or past
+    if (insertErr) throw insertErr;
+
+    // Update asset status if maintenance is scheduled for today or past
     const today = new Date().toISOString().split('T')[0];
     if (maintenance_date <= today) {
-      await c.env.DB.prepare(`
-        UPDATE assets SET 
-          status = 'MAINTENANCE',
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(asset_id).run();
+      await db
+        .from('assets')
+        .update({
+          status: 'MAINTENANCE',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', asset_id);
     }
 
-    return c.json({ success: true, maintenance_id: result.meta.last_row_id });
+    return c.json({ success: true, maintenance_id: maintenance.id });
   } catch (error) {
     console.error('Error creating maintenance record:', error);
     return c.json({ error: 'Failed to create maintenance record' }, 500);
