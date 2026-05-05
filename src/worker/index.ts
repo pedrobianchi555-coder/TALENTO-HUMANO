@@ -763,42 +763,69 @@ app.get("/api/loans", authMiddleware, async (c) => {
 app.get("/api/loans/detailed", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
-    // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
 
-    if (!userProfile) {
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
+
+    if (!userProfile || userErr) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    let loans;
+    let loansData;
     if (userProfile.role === 'HR' && hasPermission(userProfile as any, PERMISSIONS.LOAN_VIEW_ALL)) {
-      // HR can see all loans with detailed info
-      loans = await c.env.DB.prepare(`
-        SELECT l.*, 
-               u.first_name || ' ' || u.last_name as employee_name,
-               u.email as employee_email,
-               (SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id) as total_paid,
-               (l.principal_amount - COALESCE((SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id), 0)) as pending_amount
-        FROM loans l
-        JOIN users u ON l.user_id = u.id
-        ORDER BY l.created_at DESC
-      `).all();
+      // HR can see all loans with user and payment data
+      const { data: allLoans, error: loanErr } = await db
+        .from('loans')
+        .select(`
+          *,
+          user:users(id, first_name, last_name, email),
+          loan_payments(id, amount_paid)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (loanErr) throw loanErr;
+
+      // Calculate totals for each loan
+      loansData = (allLoans || []).map(l => {
+        const totalPaid = (l.loan_payments || []).reduce((sum, p) => sum + (p.amount_paid || 0), 0);
+        const pendingAmount = l.principal_amount - totalPaid;
+        return {
+          ...l,
+          employee_name: l.user ? `${l.user.first_name} ${l.user.last_name}` : null,
+          employee_email: l.user?.email,
+          total_paid: totalPaid,
+          pending_amount: pendingAmount
+        };
+      });
     } else {
       // Regular employees can only see their own loans
-      loans = await c.env.DB.prepare(`
-        SELECT l.*,
-               (SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id) as total_paid,
-               (l.principal_amount - COALESCE((SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id), 0)) as pending_amount
-        FROM loans l
-        WHERE l.user_id = ?
-        ORDER BY l.created_at DESC
-      `).bind(userProfile.id).all();
+      const { data: ownLoans, error: loanErr } = await db
+        .from('loans')
+        .select(`
+          *,
+          loan_payments(id, amount_paid)
+        `)
+        .eq('user_id', userProfile.id)
+        .order('created_at', { ascending: false });
+
+      if (loanErr) throw loanErr;
+
+      // Calculate totals for each loan
+      loansData = (ownLoans || []).map(l => {
+        const totalPaid = (l.loan_payments || []).reduce((sum, p) => sum + (p.amount_paid || 0), 0);
+        const pendingAmount = l.principal_amount - totalPaid;
+        return {
+          ...l,
+          total_paid: totalPaid,
+          pending_amount: pendingAmount
+        };
+      });
     }
 
-    return c.json(loans.results || []);
+    return c.json(loansData);
   } catch (error) {
     console.error('Error getting detailed loans:', error);
     return c.json({ error: 'Failed to get detailed loans' }, 500);
@@ -809,12 +836,14 @@ app.get("/api/loans/detailed", authMiddleware, async (c) => {
 app.post("/api/loans", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user");
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
-    
-    if (!userProfile) {
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser!.id)
+      .single();
+
+    if (!userProfile || userErr) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
@@ -823,13 +852,13 @@ app.post("/api/loans", authMiddleware, async (c) => {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    const { 
-      user_id, 
-      principal_amount, 
-      category, 
-      issue_date, 
+    const {
+      user_id,
+      principal_amount,
+      category,
+      issue_date,
       repayment_plan,
-      employee_base_salary 
+      employee_base_salary
     } = await c.req.json();
 
     // Calculate installment details
@@ -857,31 +886,50 @@ app.post("/api/loans", authMiddleware, async (c) => {
     }
 
     // Create loan
-    const loanResult = await c.env.DB.prepare(`
-      INSERT INTO loans (
-        user_id, principal_amount, interest_rate, status, issue_date, category,
-        monthly_installment, total_installments, remaining_installments
-      ) VALUES (?, ?, 0, 'ACTIVE', ?, ?, ?, ?, ?)
-    `).bind(
-      user_id, principal_amount, issue_date, category,
-      installmentAmount, totalInstallments, totalInstallments
-    ).run();
+    const { data: loanData, error: loanErr } = await db
+      .from('loans')
+      .insert({
+        user_id,
+        principal_amount,
+        interest_rate: 0,
+        status: 'ACTIVE',
+        issue_date,
+        category,
+        monthly_installment: installmentAmount,
+        total_installments: totalInstallments,
+        remaining_installments: totalInstallments,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select('id')
+      .single();
 
-    const loanId = loanResult.meta.last_row_id;
+    if (loanErr || !loanData) throw loanErr;
+    const loanId = loanData.id;
 
     // Create repayment plan
-    await c.env.DB.prepare(`
-      INSERT INTO loan_repayment_plans (loan_id, method, value, frequency, start_date)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(loanId, method, value, frequency, start_date).run();
+    const { error: planErr } = await db
+      .from('loan_repayment_plans')
+      .insert({
+        loan_id: loanId,
+        method,
+        value,
+        frequency,
+        start_date,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+
+    if (planErr) throw planErr;
 
     // Generate installments
     const startDate = new Date(start_date);
     let balance = principal_amount;
+    const installmentsBatch = [];
 
     for (let i = 1; i <= totalInstallments; i++) {
       const dueDate = new Date(startDate);
-      
+
       // Calculate due date based on frequency
       switch (frequency) {
         case 'WEEKLY':
@@ -899,24 +947,45 @@ app.post("/api/loans", authMiddleware, async (c) => {
       const currentAmount = (i === totalInstallments) ? balance : installmentAmount;
       balance -= currentAmount;
 
-      await c.env.DB.prepare(`
-        INSERT INTO loan_installments (
-          loan_id, installment_number, due_date, amount_due, balance
-        ) VALUES (?, ?, ?, ?, ?)
-      `).bind(loanId, i, dueDate.toISOString().split('T')[0], currentAmount, Math.max(0, balance)).run();
+      installmentsBatch.push({
+        loan_id: loanId,
+        installment_number: i,
+        due_date: dueDate.toISOString().split('T')[0],
+        amount_due: currentAmount,
+        balance: Math.max(0, balance),
+        status: 'PENDING',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
     }
 
-    // Get the created loan with employee info
-    const createdLoan = await c.env.DB.prepare(`
-      SELECT l.*, 
-             u.first_name || ' ' || u.last_name as employee_name,
-             u.email as employee_email
-      FROM loans l
-      JOIN users u ON l.user_id = u.id
-      WHERE l.id = ?
-    `).bind(loanId).first();
+    // Insert all installments
+    const { error: instErr } = await db
+      .from('loan_installments')
+      .insert(installmentsBatch);
 
-    return c.json(createdLoan);
+    if (instErr) throw instErr;
+
+    // Get the created loan with employee info
+    const { data: createdLoan, error: fetchErr } = await db
+      .from('loans')
+      .select(`
+        *,
+        user:users(id, first_name, last_name, email)
+      `)
+      .eq('id', loanId)
+      .single();
+
+    if (fetchErr) throw fetchErr;
+
+    // Format response
+    const response = {
+      ...createdLoan,
+      employee_name: createdLoan.user ? `${createdLoan.user.first_name} ${createdLoan.user.last_name}` : null,
+      employee_email: createdLoan.user?.email
+    };
+
+    return c.json(response);
   } catch (error) {
     console.error('Error creating loan:', error);
     return c.json({ error: 'Failed to create loan' }, 500);
@@ -976,12 +1045,14 @@ app.post("/api/loans/:id/payments", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user");
     const loanId = parseInt(c.req.param('id'));
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
-    
-    if (!userProfile) {
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser!.id)
+      .single();
+
+    if (!userProfile || userErr) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
@@ -993,59 +1064,93 @@ app.post("/api/loans/:id/payments", authMiddleware, async (c) => {
     const { installment_id, amount_paid, payment_date, payment_method, reference } = await c.req.json();
 
     // Get installment details
-    const installment = await c.env.DB.prepare(
-      "SELECT * FROM loan_installments WHERE id = ? AND loan_id = ?"
-    ).bind(installment_id, loanId).first();
+    const { data: installment, error: instErr } = await db
+      .from('loan_installments')
+      .select('*')
+      .eq('id', installment_id)
+      .eq('loan_id', loanId)
+      .single();
 
-    if (!installment) {
+    if (!installment || instErr) {
       return c.json({ error: 'Installment not found' }, 404);
     }
 
-    const remainingAmount = (installment as any).amount_due - (installment as any).amount_paid;
-    
+    const remainingAmount = (installment.amount_due || 0) - (installment.amount_paid || 0);
+
     if (amount_paid > remainingAmount) {
       return c.json({ error: 'Payment amount exceeds remaining installment balance' }, 400);
     }
 
     // Create payment record
-    await c.env.DB.prepare(`
-      INSERT INTO loan_payments (
-        loan_id, installment_id, amount_paid, payment_date, payment_method, reference, recorded_by_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      loanId, installment_id, amount_paid, payment_date, payment_method, reference, userProfile.id
-    ).run();
+    const { error: payErr } = await db
+      .from('loan_payments')
+      .insert({
+        loan_id: loanId,
+        installment_id,
+        amount_paid,
+        payment_date,
+        payment_method,
+        reference,
+        recorded_by_id: userProfile.id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
+
+    if (payErr) throw payErr;
 
     // Update installment
-    const newAmountPaid = (installment as any).amount_paid + amount_paid;
-    const newStatus = newAmountPaid >= (installment as any).amount_due ? 'PAID' : 'PARTIALLY_PAID';
+    const newAmountPaid = (installment.amount_paid || 0) + amount_paid;
+    const newStatus = newAmountPaid >= (installment.amount_due || 0) ? 'PAID' : 'PARTIALLY_PAID';
 
-    await c.env.DB.prepare(`
-      UPDATE loan_installments 
-      SET amount_paid = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(newAmountPaid, newStatus, installment_id).run();
+    const { error: updateInstErr } = await db
+      .from('loan_installments')
+      .update({
+        amount_paid: newAmountPaid,
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', installment_id);
+
+    if (updateInstErr) throw updateInstErr;
 
     // Check if all installments are paid
-    const unpaidInstallments = await c.env.DB.prepare(
-      "SELECT COUNT(*) as count FROM loan_installments WHERE loan_id = ? AND status != 'PAID'"
-    ).bind(loanId).first();
+    const { data: unpaidInstCount, error: countErr } = await db
+      .from('loan_installments')
+      .select('id', { count: 'exact', head: true })
+      .eq('loan_id', loanId)
+      .neq('status', 'PAID');
 
-    if ((unpaidInstallments as any)?.count === 0) {
+    if (!countErr && (unpaidInstCount?.length === 0 || unpaidInstCount?.length === undefined)) {
       // Mark loan as paid off
-      await c.env.DB.prepare(
-        "UPDATE loans SET status = 'PAID_OFF', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).bind(loanId).run();
+      const { error: loanErr } = await db
+        .from('loans')
+        .update({
+          status: 'PAID_OFF',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', loanId);
+
+      if (loanErr) throw loanErr;
     }
 
     // Update remaining installments count
-    const remainingCount = await c.env.DB.prepare(
-      "SELECT COUNT(*) as count FROM loan_installments WHERE loan_id = ? AND status IN ('PENDING', 'PARTIALLY_PAID')"
-    ).bind(loanId).first();
+    const { data: remainingInstCount, error: remErr } = await db
+      .from('loan_installments')
+      .select('id', { count: 'exact', head: true })
+      .eq('loan_id', loanId)
+      .in('status', ['PENDING', 'PARTIALLY_PAID']);
 
-    await c.env.DB.prepare(
-      "UPDATE loans SET remaining_installments = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).bind((remainingCount as any)?.count || 0, loanId).run();
+    if (!remErr) {
+      const { error: updateRemErr } = await db
+        .from('loans')
+        .update({
+          remaining_installments: remainingInstCount?.length || 0,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', loanId);
+
+      if (updateRemErr) throw updateRemErr;
+    }
 
     return c.json({ success: true });
   } catch (error) {
@@ -1060,10 +1165,33 @@ app.delete("/api/loans/:id", authMiddleware, requirePermission(PERMISSIONS.LOAN_
     const loanId = parseInt(c.req.param('id'));
 
     // Delete in correct order due to foreign key relationships
-    await c.env.DB.prepare("DELETE FROM loan_payments WHERE loan_id = ?").bind(loanId).run();
-    await c.env.DB.prepare("DELETE FROM loan_installments WHERE loan_id = ?").bind(loanId).run();
-    await c.env.DB.prepare("DELETE FROM loan_repayment_plans WHERE loan_id = ?").bind(loanId).run();
-    await c.env.DB.prepare("DELETE FROM loans WHERE id = ?").bind(loanId).run();
+    const { error: payErr } = await db
+      .from('loan_payments')
+      .delete()
+      .eq('loan_id', loanId);
+
+    if (payErr) throw payErr;
+
+    const { error: instErr } = await db
+      .from('loan_installments')
+      .delete()
+      .eq('loan_id', loanId);
+
+    if (instErr) throw instErr;
+
+    const { error: planErr } = await db
+      .from('loan_repayment_plans')
+      .delete()
+      .eq('loan_id', loanId);
+
+    if (planErr) throw planErr;
+
+    const { error: loanErr } = await db
+      .from('loans')
+      .delete()
+      .eq('id', loanId);
+
+    if (loanErr) throw loanErr;
 
     return c.json({ success: true });
   } catch (error) {
