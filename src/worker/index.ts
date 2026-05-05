@@ -21,13 +21,16 @@ import { logSecurityEvent, SecurityEventType, createSecurityContext } from "./se
 import { auditLog, AuditAction, AuditModule } from "./audit-logger";
 import { createDatabaseBackup } from "./backup-service";
 import * as validator from "./validation";
+import { db, dbHelpers } from "./db";
 
 type Bindings = {
-  DB: D1Database;
+  SUPABASE_URL: string;
+  SUPABASE_ANON_KEY: string;
+  SUPABASE_SERVICE_ROLE_KEY: string;
   MOCHA_USERS_SERVICE_API_URL: string;
   MOCHA_USERS_SERVICE_API_KEY: string;
   OPENAI_API_KEY: string;
-  R2_BUCKET: R2Bucket;
+  R2_BUCKET?: R2Bucket;
 };
 
 
@@ -147,24 +150,33 @@ app.post("/api/sessions", rateLimiter(RateLimits.AUTH), async (c) => {
 app.get("/api/users/me", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Try to find user in our database
-    const userResult = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userResult, error } = await db
+      .from('users')
+      .select('*')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (userResult) {
       return c.json({
         ...mochaUser,
         profile: userResult
       });
-    } else {
-      // Return just the Mocha user if no profile exists yet
+    } else if (error?.code === 'PGRST116') {
+      // Row not found - return just the Mocha user if no profile exists yet
       return c.json({
         ...mochaUser,
         profile: null
       });
+    } else if (error) {
+      throw error;
     }
+
+    return c.json({
+      ...mochaUser,
+      profile: null
+    });
   } catch (error) {
     console.error('Error getting user profile:', error);
     return c.json(c.get("user"));
@@ -273,21 +285,26 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
     console.log('[PROFILE UPDATE] Cleaned data ready');
 
     // STEP 1: Check if user exists by mocha_user_id (most reliable identifier)
-    const existingUserByMochaId = await c.env.DB.prepare(
-      "SELECT id, ci, email FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: existingUserByMochaId, error: err1 } = await db
+      .from('users')
+      .select('id, ci, email')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (existingUserByMochaId) {
       // User already exists with this mocha_user_id - this is an UPDATE
-      const userId = (existingUserByMochaId as any).id;
+      const userId = existingUserByMochaId.id;
       console.log(`[PROFILE UPDATE] Found existing user by mocha_user_id: ${userId}. Updating profile.`);
-      
+
       // Check if CI is being changed to one that belongs to another user
-      if (cleanData.ci && cleanData.ci !== (existingUserByMochaId as any).ci) {
-        const ciConflict = await c.env.DB.prepare(
-          "SELECT id FROM users WHERE ci = ? AND mocha_user_id != ?"
-        ).bind(cleanData.ci, mochaUser.id).first();
-        
+      if (cleanData.ci && cleanData.ci !== existingUserByMochaId.ci) {
+        const { data: ciConflict } = await db
+          .from('users')
+          .select('id')
+          .eq('ci', cleanData.ci)
+          .neq('mocha_user_id', mochaUser.id)
+          .single();
+
         if (ciConflict) {
           console.error(`[PROFILE UPDATE] CI conflict: ${cleanData.ci} already used by another user`);
           return c.json({ error: `La cédula ${cleanData.ci} ya está registrada para otro empleado.` }, 400);
@@ -295,72 +312,66 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
       }
 
       // Update the profile
-      await c.env.DB.prepare(`
-        UPDATE users SET 
-          email = ?, first_name = ?, last_name = ?, ci = ?, phone = ?, 
-          role = ?, birth_date = ?, department = ?, position = ?, 
-          payroll_type = ?, base_salary = ?, manager_id = ?, sede = ?, company_name = ?,
-          shirt_size = ?, pants_size = ?, boots_size = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(
-        mochaUser.email,
-        cleanData.first_name, cleanData.last_name, cleanData.ci, cleanData.phone, 
-        cleanData.role, cleanData.birth_date, cleanData.department, cleanData.position, 
-        cleanData.payroll_type, cleanData.base_salary, cleanData.manager_id, cleanData.sede, cleanData.company_name,
-        cleanData.shirt_size, cleanData.pants_size, cleanData.boots_size,
-        userId
-      ).run();
-      
+      const { error: updateErr } = await db
+        .from('users')
+        .update({
+          email: mochaUser.email,
+          ...cleanData,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+
+      if (updateErr) throw updateErr;
+
       console.log('[PROFILE UPDATE] Profile updated successfully');
       return c.json({ success: true });
     }
 
     // STEP 2: User doesn't have mocha_user_id linked yet - check by email or CI
     console.log('[PROFILE UPDATE] No user found by mocha_user_id. Checking by email/CI...');
-    
-    const existingUserByEmail = await c.env.DB.prepare(
-      "SELECT id, mocha_user_id, ci FROM users WHERE email = ?"
-    ).bind(mochaUser.email).first();
 
-    const existingUserByCI = cleanData.ci ? await c.env.DB.prepare(
-      "SELECT id, mocha_user_id, email FROM users WHERE ci = ?"
-    ).bind(cleanData.ci).first() : null;
+    const { data: existingUserByEmail } = await db
+      .from('users')
+      .select('id, mocha_user_id, ci')
+      .eq('email', mochaUser.email)
+      .single();
+
+    const { data: existingUserByCI } = cleanData.ci
+      ? await db
+          .from('users')
+          .select('id, mocha_user_id, email')
+          .eq('ci', cleanData.ci)
+          .single()
+      : { data: null };
 
     // Determine which existing user to link to
     let userToLink = null;
-    
-    if (existingUserByEmail && !(existingUserByEmail as any).mocha_user_id) {
+
+    if (existingUserByEmail && !existingUserByEmail.mocha_user_id) {
       userToLink = existingUserByEmail;
       console.log('[PROFILE UPDATE] Found unlinked user by email');
-    } else if (existingUserByCI && !(existingUserByCI as any).mocha_user_id) {
+    } else if (existingUserByCI && !existingUserByCI.mocha_user_id) {
       userToLink = existingUserByCI;
       console.log('[PROFILE UPDATE] Found unlinked user by CI');
     }
 
     if (userToLink) {
       // Link and update existing user
-      const userId = (userToLink as any).id;
+      const userId = userToLink.id;
       console.log(`[PROFILE UPDATE] Linking mocha_user_id to existing user ${userId} and updating`);
-      
-      await c.env.DB.prepare(`
-        UPDATE users SET 
-          mocha_user_id = ?, email = ?,
-          first_name = ?, last_name = ?, ci = ?, phone = ?, 
-          role = ?, birth_date = ?, department = ?, position = ?, 
-          payroll_type = ?, base_salary = ?, manager_id = ?, sede = ?, company_name = ?,
-          shirt_size = ?, pants_size = ?, boots_size = ?,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(
-        mochaUser.id, mochaUser.email,
-        cleanData.first_name, cleanData.last_name, cleanData.ci, cleanData.phone, 
-        cleanData.role, cleanData.birth_date, cleanData.department, cleanData.position, 
-        cleanData.payroll_type, cleanData.base_salary, cleanData.manager_id, cleanData.sede, cleanData.company_name,
-        cleanData.shirt_size, cleanData.pants_size, cleanData.boots_size,
-        userId
-      ).run();
-      
+
+      const { error: linkErr } = await db
+        .from('users')
+        .update({
+          mocha_user_id: mochaUser.id,
+          email: mochaUser.email,
+          ...cleanData,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+
+      if (linkErr) throw linkErr;
+
       console.log('[PROFILE UPDATE] User linked and updated successfully');
       return c.json({ success: true });
     }
@@ -368,9 +379,9 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
     // STEP 3: No existing user found - user must be created by HR
     console.log('[PROFILE UPDATE] No existing user found to link or update.');
     console.log('[PROFILE UPDATE] User must be created by HR administrator first.');
-    
-    return c.json({ 
-      error: 'Tu perfil de empleado no se encuentra en el sistema. Para completar tu registro, debes contactar al departamento de Talento Humano para que creen tu perfil de empleado. Una vez creado, podrás completar esta configuración e iniciar sesión en la aplicación.' 
+
+    return c.json({
+      error: 'Tu perfil de empleado no se encuentra en el sistema. Para completar tu registro, debes contactar al departamento de Talento Humano para que creen tu perfil de empleado. Una vez creado, podrás completar esta configuración e iniciar sesión en la aplicación.'
     }, 404);
   } catch (error) {
     console.error('[PROFILE UPDATE] Error:', error);
@@ -385,10 +396,12 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
 app.get("/api/dashboard/stats", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -398,128 +411,127 @@ app.get("/api/dashboard/stats", authMiddleware, async (c) => {
 
     if (userProfile.role === 'HR') {
       // Stats for HR users
-      
+
       // Active employees count
-      const activeEmployees = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM users WHERE role = 'EMPLOYEE' AND status = 'ACTIVE'"
-      ).first();
-      stats.activeEmployees = (activeEmployees as any)?.count || 0;
+      const { count: activeEmployeesCount } = await db
+        .from('users')
+        .select('*', { count: 'exact', head: true })
+        .eq('role', 'EMPLOYEE')
+        .eq('status', 'ACTIVE');
+      stats.activeEmployees = activeEmployeesCount || 0;
 
       // Candidates in process count
-      const candidatesInProcess = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM candidates WHERE status IN ('PHONE_SCREEN', 'INTERVIEW', 'OFFER')"
-      ).first();
-      stats.candidatesInProcess = (candidatesInProcess as any)?.count || 0;
+      const { count: candidatesCount } = await db
+        .from('candidates')
+        .select('*', { count: 'exact', head: true })
+        .in('status', ['PHONE_SCREEN', 'INTERVIEW', 'OFFER']);
+      stats.candidatesInProcess = candidatesCount || 0;
 
       // Pending requests count (if has permission)
       if (hasPermission(userProfile as any, PERMISSIONS.REQUEST_VIEW_ALL)) {
-        const pendingRequests = await c.env.DB.prepare(
-          "SELECT COUNT(*) as count FROM requests WHERE status = 'PENDING'"
-        ).first();
-        stats.pendingRequests = (pendingRequests as any)?.count || 0;
+        const { count: requestsCount } = await db
+          .from('requests')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'PENDING');
+        stats.pendingRequests = requestsCount || 0;
       }
 
       // Active loans count (if has permission)
       if (hasPermission(userProfile as any, PERMISSIONS.LOAN_VIEW_ALL)) {
-        const activeLoans = await c.env.DB.prepare(
-          "SELECT COUNT(*) as count FROM loans WHERE status = 'ACTIVE'"
-        ).first();
-        stats.activeLoans = (activeLoans as any)?.count || 0;
+        const { count: loansCount } = await db
+          .from('loans')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'ACTIVE');
+        stats.activeLoans = loansCount || 0;
       }
 
       // Pending evaluations count (if has permission)
       if (hasPermission(userProfile as any, PERMISSIONS.EVALUATION_VIEW_ALL)) {
-        const pendingEvaluations = await c.env.DB.prepare(
-          "SELECT COUNT(*) as count FROM evaluations WHERE status IN ('PENDING', 'SELF_COMPLETED', 'MANAGER_COMPLETED') AND status != 'COMPLETED'"
-        ).first();
-        stats.pendingEvaluations = (pendingEvaluations as any)?.count || 0;
+        const { count: evaluationsCount } = await db
+          .from('evaluations')
+          .select('*', { count: 'exact', head: true })
+          .in('status', ['PENDING', 'SELF_COMPLETED', 'MANAGER_COMPLETED']);
+        stats.pendingEvaluations = evaluationsCount || 0;
       }
 
       // Upcoming events count
       const today = new Date().toISOString().split('T')[0];
-      const upcomingEvents = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM corporate_events WHERE start_date >= ?"
-      ).bind(today).first();
-      stats.upcomingEvents = (upcomingEvents as any)?.count || 0;
+      const { count: eventsCount } = await db
+        .from('corporate_events')
+        .select('*', { count: 'exact', head: true })
+        .gte('start_date', today);
+      stats.upcomingEvents = eventsCount || 0;
 
       // Pending complaints count (if has permission)
       if (hasPermission(userProfile as any, PERMISSIONS.COMPLAINT_VIEW_ALL)) {
-        const pendingComplaints = await c.env.DB.prepare(
-          "SELECT COUNT(*) as count FROM complaints WHERE status = 'PENDIENTE'"
-        ).first();
-        stats.pendingComplaints = (pendingComplaints as any)?.count || 0;
+        const { count: complaintsCount } = await db
+          .from('complaints')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'PENDING');
+        stats.pendingComplaints = complaintsCount || 0;
       }
 
       // Assigned assets count (if has permission)
       if (hasPermission(userProfile as any, PERMISSIONS.ASSET_VIEW_ALL)) {
-        const assignedAssets = await c.env.DB.prepare(
-          "SELECT COUNT(*) as count FROM assets WHERE status = 'ASSIGNED'"
-        ).first();
-        stats.assignedAssets = (assignedAssets as any)?.count || 0;
+        const { count: assetsCount } = await db
+          .from('assets')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'ASSIGNED');
+        stats.assignedAssets = assetsCount || 0;
       }
-
-      
-
-      // Current month payslips count (if has permission)
-      if (hasPermission(userProfile as any, PERMISSIONS.PAYSLIP_VIEW_ALL)) {
-        const currentDate = new Date();
-        const currentMonth = currentDate.getMonth() + 1;
-        const currentYear = currentDate.getFullYear();
-        
-        const currentMonthPayslips = await c.env.DB.prepare(
-          "SELECT COUNT(*) as count FROM payslips WHERE month = ? AND year = ?"
-        ).bind(currentMonth, currentYear).first();
-        stats.currentMonthPayslips = (currentMonthPayslips as any)?.count || 0;
-      }
-
     } else {
       // Stats for regular employees
-      
+
       // My pending requests
-      const myPendingRequests = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM requests WHERE user_id = ? AND status = 'PENDING'"
-      ).bind(userProfile.id).first();
-      stats.myPendingRequests = (myPendingRequests as any)?.count || 0;
+      const { count: requestsCount } = await db
+        .from('requests')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userProfile.id)
+        .eq('status', 'PENDING');
+      stats.myPendingRequests = requestsCount || 0;
 
       // My active loans
-      const myActiveLoans = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM loans WHERE user_id = ? AND status = 'ACTIVE'"
-      ).bind(userProfile.id).first();
-      stats.myActiveLoans = (myActiveLoans as any)?.count || 0;
+      const { count: loansCount } = await db
+        .from('loans')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userProfile.id)
+        .eq('status', 'ACTIVE');
+      stats.myActiveLoans = loansCount || 0;
 
       // My pending evaluations
-      const myPendingEvaluations = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM evaluations WHERE employee_id = ? AND status IN ('PENDING', 'MANAGER_COMPLETED') AND status != 'COMPLETED'"
-      ).bind(userProfile.id).first();
-      stats.myPendingEvaluations = (myPendingEvaluations as any)?.count || 0;
+      const { count: evaluationsCount } = await db
+        .from('evaluations')
+        .select('*', { count: 'exact', head: true })
+        .eq('employee_id', userProfile.id)
+        .in('status', ['PENDING', 'MANAGER_COMPLETED']);
+      stats.myPendingEvaluations = evaluationsCount || 0;
 
-      // Upcoming events I'm attending or should attend
+      // Upcoming events
       const today = new Date().toISOString().split('T')[0];
-      const upcomingEvents = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM corporate_events WHERE start_date >= ?"
-      ).bind(today).first();
-      stats.upcomingEvents = (upcomingEvents as any)?.count || 0;
+      const { count: eventsCount } = await db
+        .from('corporate_events')
+        .select('*', { count: 'exact', head: true })
+        .gte('start_date', today);
+      stats.upcomingEvents = eventsCount || 0;
 
       // My assigned assets
-      const myAssignedAssets = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM assets WHERE assigned_to_id = ?"
-      ).bind(userProfile.id).first();
-      stats.myAssignedAssets = (myAssignedAssets as any)?.count || 0;
+      const { count: assetsCount } = await db
+        .from('assets')
+        .select('*', { count: 'exact', head: true })
+        .eq('assigned_to_id', userProfile.id);
+      stats.myAssignedAssets = assetsCount || 0;
 
       // My pending complaints
-      const myPendingComplaints = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM complaints WHERE user_id = ? AND status = 'PENDIENTE'"
-      ).bind(userProfile.id).first();
-      stats.myPendingComplaints = (myPendingComplaints as any)?.count || 0;
+      const { count: complaintsCount } = await db
+        .from('complaints')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', userProfile.id)
+        .eq('status', 'PENDING');
+      stats.myPendingComplaints = complaintsCount || 0;
 
       // My payslips this year
       const currentYear = new Date().getFullYear();
-      const myPayslipsThisYear = await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM payslips WHERE user_id = ? AND year = ?"
-      ).bind(userProfile.id, currentYear).first();
-      stats.myPayslipsThisYear = (myPayslipsThisYear as any)?.count || 0;
-
-      
+      stats.myPayslipsThisYear = 0; // Will implement when payslips table is added
     }
 
     return c.json(stats);
