@@ -3749,30 +3749,40 @@ app.post("/api/asset-maintenance", authMiddleware, async (c) => {
 app.get("/api/asset-assignments", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const assignments = await c.env.DB.prepare(`
-      SELECT aa.*,
-             a.name as asset_name,
-             a.asset_code,
-             u.first_name || ' ' || u.last_name as employee_name,
-             ub.first_name || ' ' || ub.last_name as assigned_by_name
-      FROM asset_assignments aa
-      JOIN assets a ON aa.asset_id = a.id
-      JOIN users u ON aa.user_id = u.id
-      JOIN users ub ON aa.assigned_by_id = ub.id
-      ORDER BY aa.created_at DESC
-    `).all();
+    const { data: assignments, error: assignmentsErr } = await db
+      .from('asset_assignments')
+      .select(`
+        *,
+        asset:assets (name, asset_code),
+        user:users!asset_assignments_user_id_fkey (first_name, last_name),
+        assigned_by_user:users!asset_assignments_assigned_by_id_fkey (first_name, last_name)
+      `)
+      .order('created_at', { ascending: false });
 
-    return c.json(assignments.results || []);
+    if (assignmentsErr) throw assignmentsErr;
+
+    // Format response with flattened employee and assigned_by names
+    const formattedAssignments = (assignments || []).map((aa) => ({
+      ...aa,
+      asset_name: aa.asset?.name,
+      asset_code: aa.asset?.asset_code,
+      employee_name: `${aa.user?.first_name || ''} ${aa.user?.last_name || ''}`.trim(),
+      assigned_by_name: `${aa.assigned_by_user?.first_name || ''} ${aa.assigned_by_user?.last_name || ''}`.trim()
+    }));
+
+    return c.json(formattedAssignments);
   } catch (error) {
     console.error('Error getting asset assignments:', error);
     return c.json({ error: 'Failed to get asset assignments' }, 500);
@@ -3783,28 +3793,38 @@ app.get("/api/asset-assignments", authMiddleware, async (c) => {
 app.get("/api/asset-maintenance", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    const maintenance = await c.env.DB.prepare(`
-      SELECT am.*,
-             a.name as asset_name,
-             a.asset_code,
-             u.first_name || ' ' || u.last_name as created_by_name
-      FROM asset_maintenance am
-      JOIN assets a ON am.asset_id = a.id
-      JOIN users u ON am.created_by_id = u.id
-      ORDER BY am.created_at DESC
-    `).all();
+    const { data: maintenance, error: maintenanceErr } = await db
+      .from('asset_maintenance')
+      .select(`
+        *,
+        asset:assets (name, asset_code),
+        created_by_user:users!asset_maintenance_created_by_id_fkey (first_name, last_name)
+      `)
+      .order('created_at', { ascending: false });
 
-    return c.json(maintenance.results || []);
+    if (maintenanceErr) throw maintenanceErr;
+
+    // Format response with flattened asset and created_by names
+    const formattedMaintenance = (maintenance || []).map((am) => ({
+      ...am,
+      asset_name: am.asset?.name,
+      asset_code: am.asset?.asset_code,
+      created_by_name: `${am.created_by_user?.first_name || ''} ${am.created_by_user?.last_name || ''}`.trim()
+    }));
+
+    return c.json(formattedMaintenance);
   } catch (error) {
     console.error('Error getting asset maintenance:', error);
     return c.json({ error: 'Failed to get asset maintenance' }, 500);
@@ -3816,64 +3836,84 @@ app.get("/api/assets/:id/history", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const assetId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
     // Get assignments history
-    const assignments = await c.env.DB.prepare(`
-      SELECT aa.*,
-             u.first_name || ' ' || u.last_name as employee_name,
-             ub.first_name || ' ' || ub.last_name as assigned_by_name,
-             'ASSIGNMENT' as event_type
-      FROM asset_assignments aa
-      JOIN users u ON aa.user_id = u.id
-      JOIN users ub ON aa.assigned_by_id = ub.id
-      WHERE aa.asset_id = ?
-      ORDER BY aa.assigned_date DESC
-    `).bind(assetId).all();
+    const { data: assignments, error: assignErr } = await db
+      .from('asset_assignments')
+      .select(`
+        *,
+        user:users!asset_assignments_user_id_fkey (first_name, last_name),
+        assigned_by_user:users!asset_assignments_assigned_by_id_fkey (first_name, last_name)
+      `)
+      .eq('asset_id', assetId)
+      .order('assigned_date', { ascending: false });
+
+    if (assignErr) throw assignErr;
 
     // Get maintenance history
-    const maintenance = await c.env.DB.prepare(`
-      SELECT am.*,
-             u.first_name || ' ' || u.last_name as created_by_name,
-             'MAINTENANCE' as event_type
-      FROM asset_maintenance am
-      JOIN users u ON am.created_by_id = u.id
-      WHERE am.asset_id = ?
-      ORDER BY am.maintenance_date DESC
-    `).bind(assetId).all();
+    const { data: maintenance, error: maintErr } = await db
+      .from('asset_maintenance')
+      .select(`
+        *,
+        created_by_user:users!asset_maintenance_created_by_id_fkey (first_name, last_name)
+      `)
+      .eq('asset_id', assetId)
+      .order('maintenance_date', { ascending: false });
+
+    if (maintErr) throw maintErr;
 
     // Get incidents history
-    const incidents = await c.env.DB.prepare(`
-      SELECT ai.*,
-             u.first_name || ' ' || u.last_name as reported_by_name,
-             ur.first_name || ' ' || ur.last_name as resolved_by_name,
-             'INCIDENT' as event_type
-      FROM asset_incidents ai
-      JOIN users u ON ai.reported_by_id = u.id
-      LEFT JOIN users ur ON ai.resolved_by_id = ur.id
-      WHERE ai.asset_id = ?
-      ORDER BY ai.incident_date DESC
-    `).bind(assetId).all();
+    const { data: incidents, error: incidErr } = await db
+      .from('asset_incidents')
+      .select(`
+        *,
+        reported_by_user:users!asset_incidents_reported_by_id_fkey (first_name, last_name),
+        resolved_by_user:users!asset_incidents_resolved_by_id_fkey (first_name, last_name)
+      `)
+      .eq('asset_id', assetId)
+      .order('incident_date', { ascending: false });
 
-    // Combine all events and sort chronologically
+    if (incidErr) throw incidErr;
+
+    // Combine all events with event type
     const allEvents = [
-      ...(assignments.results || []),
-      ...(maintenance.results || []),
-      ...(incidents.results || [])
+      ...(assignments || []).map(a => ({
+        ...a,
+        event_type: 'ASSIGNMENT',
+        employee_name: `${a.user?.first_name || ''} ${a.user?.last_name || ''}`.trim(),
+        assigned_by_name: `${a.assigned_by_user?.first_name || ''} ${a.assigned_by_user?.last_name || ''}`.trim(),
+        event_date: a.assigned_date
+      })),
+      ...(maintenance || []).map(m => ({
+        ...m,
+        event_type: 'MAINTENANCE',
+        created_by_name: `${m.created_by_user?.first_name || ''} ${m.created_by_user?.last_name || ''}`.trim(),
+        event_date: m.maintenance_date
+      })),
+      ...(incidents || []).map(i => ({
+        ...i,
+        event_type: 'INCIDENT',
+        reported_by_name: `${i.reported_by_user?.first_name || ''} ${i.reported_by_user?.last_name || ''}`.trim(),
+        resolved_by_name: `${i.resolved_by_user?.first_name || ''} ${i.resolved_by_user?.last_name || ''}`.trim(),
+        event_date: i.incident_date
+      }))
     ];
 
     // Sort by date (most recent first)
     allEvents.sort((a, b) => {
-      const dateA = new Date((a as any).assigned_date || (a as any).maintenance_date || (a as any).incident_date);
-      const dateB = new Date((b as any).assigned_date || (b as any).maintenance_date || (b as any).incident_date);
+      const dateA = new Date(a.event_date);
+      const dateB = new Date(b.event_date);
       return dateB.getTime() - dateA.getTime();
     });
 
@@ -3888,11 +3928,13 @@ app.get("/api/assets/:id/history", authMiddleware, async (c) => {
 app.post("/api/asset-incidents", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -3909,17 +3951,26 @@ app.post("/api/asset-incidents", authMiddleware, async (c) => {
     } = await c.req.json();
 
     // Create incident record
-    const result = await c.env.DB.prepare(`
-      INSERT INTO asset_incidents (
-        asset_id, assignment_id, incident_type, description, incident_date, 
-        reported_by_id, severity, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
-      asset_id, assignment_id, incident_type, description, incident_date,
-      userProfile.id, severity || 'MEDIUM', notes
-    ).run();
+    const { data: incident, error: insertErr } = await db
+      .from('asset_incidents')
+      .insert({
+        asset_id,
+        assignment_id,
+        incident_type,
+        description,
+        incident_date,
+        reported_by_id: userProfile.id,
+        severity: severity || 'MEDIUM',
+        notes,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select('*')
+      .single();
 
-    return c.json({ success: true, incident_id: result.meta.last_row_id });
+    if (insertErr) throw insertErr;
+
+    return c.json({ success: true, incident_id: incident.id });
   } catch (error) {
     console.error('Error creating incident record:', error);
     return c.json({ error: 'Failed to create incident record' }, 500);
@@ -3931,11 +3982,13 @@ app.put("/api/asset-incidents/:id/resolve", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const incidentId = parseInt(c.req.param('id'));
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -3944,14 +3997,17 @@ app.put("/api/asset-incidents/:id/resolve", authMiddleware, async (c) => {
     const { resolution, resolved_date } = await c.req.json();
 
     // Update incident with resolution
-    await c.env.DB.prepare(`
-      UPDATE asset_incidents SET 
-        resolution = ?,
-        resolved_date = ?,
-        resolved_by_id = ?,
-        updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(resolution, resolved_date, userProfile.id, incidentId).run();
+    const { error: updateErr } = await db
+      .from('asset_incidents')
+      .update({
+        resolution,
+        resolved_date,
+        resolved_by_id: userProfile.id,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', incidentId);
+
+    if (updateErr) throw updateErr;
 
     return c.json({ success: true });
   } catch (error) {
