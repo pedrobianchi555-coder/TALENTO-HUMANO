@@ -1,0 +1,3 @@
+
+-- Actualizar evaluaciones que tienen MANAGER_COMPLETED a MANAGER_EVALUATION_PENDING
+UPDATE evaluations SET status = 'MANAGER_EVALUATION_PENDING' WHERE status = 'MANAGER_COMPLETED';
