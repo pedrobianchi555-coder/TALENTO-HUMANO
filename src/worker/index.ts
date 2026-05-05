@@ -3097,30 +3097,24 @@ app.put("/api/interviews/:id", authMiddleware, async (c) => {
 // Get employee audit log (HR only)
 app.get("/api/employee-audit-log", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE_AUDIT_LOG), async (c) => {
   try {
-
     const employeeId = c.req.query('employee_id');
     const actionType = c.req.query('action_type');
-    
-    let query = "SELECT * FROM employee_audit_log WHERE 1=1";
-    const params = [];
+
+    let query = db.from('employee_audit_log').select('*');
 
     if (employeeId) {
-      query += " AND employee_id = ?";
-      params.push(parseInt(employeeId));
+      query = query.eq('employee_id', parseInt(employeeId));
     }
 
     if (actionType) {
-      query += " AND action_type = ?";
-      params.push(actionType);
+      query = query.eq('action_type', actionType);
     }
 
-    query += " ORDER BY performed_at DESC";
+    const { data: auditLogs, error: auditErr } = await query.order('performed_at', { ascending: false });
 
-    const auditLogs = params.length > 0 
-      ? await c.env.DB.prepare(query).bind(...params).all()
-      : await c.env.DB.prepare(query).all();
+    if (auditErr) throw auditErr;
 
-    return c.json(auditLogs.results || []);
+    return c.json(auditLogs || []);
   } catch (error) {
     console.error('Error getting audit log:', error);
     return c.json({ error: 'Failed to get audit log' }, 500);
@@ -3130,11 +3124,13 @@ app.get("/api/employee-audit-log", authMiddleware, requirePermission(PERMISSIONS
 // Create document (HR only)
 app.post("/api/documents", authMiddleware, requirePermission(PERMISSIONS.DOCUMENT_UPLOAD), async (c) => {
   try {
-    const mochaUser = c.get("user");
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
+    const mochaUser = c.get("user") as MochaUser;
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -3143,21 +3139,34 @@ app.post("/api/documents", authMiddleware, requirePermission(PERMISSIONS.DOCUMEN
     const { title, description, category, department, is_public, file_url } = await c.req.json();
 
     // Create document
-    const result = await c.env.DB.prepare(`
-      INSERT INTO documents (
-        title, description, category, department, is_public, file_url, uploaded_by_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(title, description, category, department, is_public, file_url, (userProfile as any).id).run();
+    const { data: document, error: insertErr } = await db
+      .from('documents')
+      .insert({
+        title,
+        description,
+        category,
+        department,
+        is_public,
+        file_url,
+        uploaded_by_id: userProfile.id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select(`
+        *,
+        uploader:users!documents_uploaded_by_id_fkey (first_name, last_name)
+      `)
+      .single();
 
-    // Get the created document
-    const document = await c.env.DB.prepare(`
-      SELECT d.*, u.first_name || ' ' || u.last_name as uploader_name
-      FROM documents d
-      JOIN users u ON d.uploaded_by_id = u.id
-      WHERE d.id = ?
-    `).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
-    return c.json(document);
+    // Format response with uploader name
+    const response = {
+      ...document,
+      uploader_name: `${document.uploader?.first_name || ''} ${document.uploader?.last_name || ''}`.trim()
+    };
+
+    return c.json(response);
   } catch (error) {
     console.error('Error creating document:', error);
     return c.json({ error: 'Failed to create document' }, 500);
