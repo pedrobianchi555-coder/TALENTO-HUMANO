@@ -5,6 +5,7 @@ import { createOpenAIService } from "../shared/openai";
 import aiRoutes from "./ai-endpoints";
 import adminRoutes from "./admin-endpoints";
 import whatsappRoutes from "./whatsapp-endpoints";
+import pulseRoutes from "./pulse-endpoints";
 import { hasPermission, PERMISSIONS } from "./permissions";
 import { requirePermission } from "./permission-middleware";
 import { securityHeaders } from "./security-headers";
@@ -47,6 +48,9 @@ app.route('/', adminRoutes);
 
 // Mount WhatsApp routes
 app.route('/', whatsappRoutes);
+
+// Mount Pulse & Flow routes
+app.route('/', pulseRoutes);
 
 
 // Get current user with enhanced profile

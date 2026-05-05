@@ -22,6 +22,7 @@ import {
   Receipt,
   Send,
   Database,
+  Zap,
 } from "lucide-react";
 import type { EnhancedUser } from "@/shared/types";
 import usePermissions, { PERMISSIONS } from "@/react-app/hooks/usePermissions";
@@ -58,6 +59,7 @@ export default function Sidebar({ user, isHR }: SidebarProps) {
     { icon: Calendar, label: "Eventos", href: "/events", color: "text-indigo-600" },
     { icon: Cake, label: "Cumpleañeros", href: "/birthdays", color: "text-pink-600" },
     { icon: AlertCircle, label: "Buzón de Quejas", href: "/complaints", color: "text-red-600" },
+    { icon: Zap, label: "Pulse & Flow", href: "/pulse", color: "text-purple-600" },
   ];
 
   const hrMenuItems: MenuItem[] = [
@@ -75,6 +77,7 @@ export default function Sidebar({ user, isHR }: SidebarProps) {
     ...(can(PERMISSIONS.EVENT_VIEW_ALL) ? [{ icon: Calendar, label: "Eventos", href: "/events", color: "text-pink-600" }] : []),
     { icon: Cake, label: "Cumpleañeros", href: "/birthdays", color: "text-pink-500" },
     ...(can(PERMISSIONS.COMPLAINT_VIEW_ALL) ? [{ icon: AlertCircle, label: "Quejas", href: "/complaints", color: "text-red-600" }] : []),
+    { icon: Zap, label: "Pulse & Flow", href: "/pulse", color: "text-purple-600" },
     ...(can(PERMISSIONS.ASSET_VIEW_ALL) ? [{ icon: Package, label: "Activos", href: "/assets", color: "text-yellow-600" }] : []),
     ...(isHR ? [{ icon: Send, label: "WhatsApp", href: "/whatsapp-settings", color: "text-green-600" }] : []),
     ...(can(PERMISSIONS.HR_ADMIN) ? [{ icon: Database, label: "Copias de Seguridad", href: "/backups", color: "text-cyan-600" }] : []),

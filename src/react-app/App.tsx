@@ -24,6 +24,7 @@ import BackupManagement from "@/react-app/pages/BackupManagement";
 import AuditLog from "@/react-app/pages/AuditLog";
 import RequestResponseDashboard from "@/react-app/pages/RequestResponseDashboard";
 import AttendanceDashboard from "@/react-app/pages/AttendanceDashboard";
+import PulseFlow from "@/react-app/pages/PulseFlow";
 
 export default function App() {
   return (
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="/audit-log" element={<AppLayout><AuditLog /></AppLayout>} />
           <Route path="/request-reports" element={<AppLayout><RequestResponseDashboard /></AppLayout>} />
           <Route path="/attendance" element={<AppLayout><AttendanceDashboard /></AppLayout>} />
+          <Route path="/pulse" element={<AppLayout><PulseFlow /></AppLayout>} />
         </Routes>
       </Router>
     </AuthProvider>
