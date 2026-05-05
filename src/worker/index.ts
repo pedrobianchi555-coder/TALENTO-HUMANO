@@ -5267,40 +5267,58 @@ app.get('/api/files/*', async (c) => {
 app.get("/api/payslips", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    let payslips;
+    let payslipsData;
     if (userProfile.role === 'HR' && hasPermission(userProfile as any, PERMISSIONS.PAYSLIP_VIEW_ALL)) {
       // HR can see all payslips
-      payslips = await c.env.DB.prepare(`
-        SELECT p.*, 
-               u.first_name || ' ' || u.last_name as employee_name,
-               ub.first_name || ' ' || ub.last_name as uploaded_by_name
-        FROM payslips p
-        JOIN users u ON p.user_id = u.id
-        JOIN users ub ON p.uploaded_by_id = ub.id
-        ORDER BY p.year DESC, p.month DESC, p.created_at DESC
-      `).all();
+      const { data: allPayslips, error: payErr } = await db
+        .from('payslips')
+        .select(`
+          *,
+          user:users (first_name, last_name),
+          uploaded_by:users!payslips_uploaded_by_id_fkey (first_name, last_name)
+        `)
+        .order('year', { ascending: false })
+        .order('month', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (payErr) throw payErr;
+      payslipsData = allPayslips;
     } else {
       // Regular employees can only see their own payslips
-      payslips = await c.env.DB.prepare(`
-        SELECT p.*, 
-               ub.first_name || ' ' || ub.last_name as uploaded_by_name
-        FROM payslips p
-        JOIN users ub ON p.uploaded_by_id = ub.id
-        WHERE p.user_id = ?
-        ORDER BY p.year DESC, p.month DESC, p.created_at DESC
-      `).bind(userProfile.id).all();
+      const { data: ownPayslips, error: payErr } = await db
+        .from('payslips')
+        .select(`
+          *,
+          uploaded_by:users!payslips_uploaded_by_id_fkey (first_name, last_name)
+        `)
+        .eq('user_id', userProfile.id)
+        .order('year', { ascending: false })
+        .order('month', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      if (payErr) throw payErr;
+      payslipsData = ownPayslips;
     }
 
-    return c.json(payslips.results || []);
+    // Format response with flattened employee names
+    const formattedPayslips = (payslipsData || []).map(p => ({
+      ...p,
+      employee_name: p.user ? `${p.user.first_name || ''} ${p.user.last_name || ''}`.trim() : null,
+      uploaded_by_name: p.uploaded_by ? `${p.uploaded_by.first_name || ''} ${p.uploaded_by.last_name || ''}`.trim() : null
+    }));
+
+    return c.json(formattedPayslips);
   } catch (error) {
     console.error('Error getting payslips:', error);
     return c.json({ error: 'Failed to get payslips' }, 500);
@@ -5310,10 +5328,13 @@ app.get("/api/payslips", authMiddleware, async (c) => {
 // Batch upload payslips (HR only)
 app.post("/api/payslips/batch-upload", authMiddleware, requirePermission(PERMISSIONS.PAYSLIP_UPLOAD), rateLimiter(RateLimits.UPLOAD), async (c) => {
   try {
-    const mochaUser = c.get("user");
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
+    const mochaUser = c.get("user") as MochaUser;
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -5371,31 +5392,38 @@ app.post("/api/payslips/batch-upload", authMiddleware, requirePermission(PERMISS
         const employeeCi = ciMatch[1];
 
         // 2. Buscar empleado por cédula
-        const employee = await c.env.DB.prepare(
-          "SELECT id, first_name, last_name FROM users WHERE ci = ? AND status = 'ACTIVE'"
-        ).bind(employeeCi).first();
+        const { data: employee, error: empErr } = await db
+          .from('users')
+          .select('id, first_name, last_name')
+          .eq('ci', employeeCi)
+          .eq('status', 'ACTIVE')
+          .single();
 
-        if (!employee) {
-          errors.push({ 
-            filename: originalFilename, 
-            reason: `Empleado con cédula ${employeeCi} no encontrado o inactivo.` 
+        if (!employee || empErr) {
+          errors.push({
+            filename: originalFilename,
+            reason: `Empleado con cédula ${employeeCi} no encontrado o inactivo.`
           });
           continue;
         }
 
-        const employeeId = (employee as any).id;
-        const employeeName = `${(employee as any).first_name} ${(employee as any).last_name}`;
+        const employeeId = employee.id;
+        const employeeName = `${employee.first_name} ${employee.last_name}`;
 
         // 3. Verificar si ya existe un recibo para este empleado, mes y año
-        const existingPayslip = await c.env.DB.prepare(
-          "SELECT id FROM payslips WHERE user_id = ? AND month = ? AND year = ?"
-        ).bind(employeeId, month, year).first();
+        const { data: existingPayslip, error: existErr } = await db
+          .from('payslips')
+          .select('id')
+          .eq('user_id', employeeId)
+          .eq('month', month)
+          .eq('year', year)
+          .single();
 
-        if (existingPayslip) {
+        if (existingPayslip && !existErr) {
           skippedCount++;
-          errors.push({ 
-            filename: originalFilename, 
-            reason: `Ya existe un recibo para ${employeeName} (${employeeCi}) para ${months[month - 1]} ${year}.` 
+          errors.push({
+            filename: originalFilename,
+            reason: `Ya existe un recibo para ${employeeName} (${employeeCi}) para ${months[month - 1]} ${year}.`
           });
           continue;
         }
@@ -5417,10 +5445,20 @@ app.post("/api/payslips/batch-upload", authMiddleware, requirePermission(PERMISS
 
         // 5. Crear registro en payslips
         const title = `Recibo de Pago ${months[month - 1]} ${year} - ${employeeName}`;
-        await c.env.DB.prepare(`
-          INSERT INTO payslips (user_id, month, year, title, file_url, uploaded_by_id)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).bind(employeeId, month, year, title, fileUrl, uploadedById).run();
+        const { error: insertErr } = await db
+          .from('payslips')
+          .insert({
+            user_id: employeeId,
+            month,
+            year,
+            title,
+            file_url: fileUrl,
+            uploaded_by_id: uploadedById,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          });
+
+        if (insertErr) throw insertErr;
 
         importedCount++;
       } catch (fileError) {
@@ -5450,11 +5488,13 @@ app.post("/api/payslips/batch-upload", authMiddleware, requirePermission(PERMISS
 // Create payslip (HR only)
 app.post("/api/payslips", authMiddleware, requirePermission(PERMISSIONS.PAYSLIP_UPLOAD), async (c) => {
   try {
-    const mochaUser = c.get("user");
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
+    const mochaUser = c.get("user") as MochaUser;
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -5472,10 +5512,14 @@ app.post("/api/payslips", authMiddleware, requirePermission(PERMISSIONS.PAYSLIP_
       return c.json({ error: 'Invalid month' }, 400);
     }
 
-    // Check if payslip already exists for this user, month, and year
-    const existing = await c.env.DB.prepare(
-      "SELECT id FROM payslips WHERE user_id = ? AND month = ? AND year = ?"
-    ).bind(user_id, month, year).first();
+    // Check if payslip already exists
+    const { data: existing, error: existErr } = await db
+      .from('payslips')
+      .select('id')
+      .eq('user_id', user_id)
+      .eq('month', month)
+      .eq('year', year)
+      .single();
 
     if (existing) {
       return c.json({ error: 'Ya existe un recibo para este empleado en este período' }, 400);
@@ -5489,24 +5533,35 @@ app.post("/api/payslips", authMiddleware, requirePermission(PERMISSIONS.PAYSLIP_
     const finalTitle = title || `Recibo de Pago ${months[month - 1]} ${year}`;
 
     // Create payslip
-    const result = await c.env.DB.prepare(`
-      INSERT INTO payslips (
-        user_id, month, year, title, file_url, uploaded_by_id
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(user_id, month, year, finalTitle, file_url, userProfile.id).run();
+    const { data: payslip, error: insertErr } = await db
+      .from('payslips')
+      .insert({
+        user_id,
+        month,
+        year,
+        title: finalTitle,
+        file_url,
+        uploaded_by_id: userProfile.id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select(`
+        *,
+        user:users (first_name, last_name),
+        uploaded_by:users!payslips_uploaded_by_id_fkey (first_name, last_name)
+      `)
+      .single();
 
-    // Get the created payslip with employee info
-    const payslip = await c.env.DB.prepare(`
-      SELECT p.*, 
-             u.first_name || ' ' || u.last_name as employee_name,
-             ub.first_name || ' ' || ub.last_name as uploaded_by_name
-      FROM payslips p
-      JOIN users u ON p.user_id = u.id
-      JOIN users ub ON p.uploaded_by_id = ub.id
-      WHERE p.id = ?
-    `).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
-    return c.json(payslip);
+    // Format response
+    const response = {
+      ...payslip,
+      employee_name: payslip.user ? `${payslip.user.first_name || ''} ${payslip.user.last_name || ''}`.trim() : null,
+      uploaded_by_name: payslip.uploaded_by ? `${payslip.uploaded_by.first_name || ''} ${payslip.uploaded_by.last_name || ''}`.trim() : null
+    };
+
+    return c.json(response);
   } catch (error) {
     console.error('Error creating payslip:', error);
     return c.json({ error: 'Failed to create payslip' }, 500);
@@ -5518,20 +5573,27 @@ app.delete("/api/payslips/:id", authMiddleware, requirePermission(PERMISSIONS.PA
   try {
     const payslipId = parseInt(c.req.param('id'));
 
-    // Get payslip to get file_url for cleanup (optional)
-    const payslip = await c.env.DB.prepare(
-      "SELECT file_url FROM payslips WHERE id = ?"
-    ).bind(payslipId).first();
+    // Get payslip to verify existence
+    const { data: payslip, error: selectErr } = await db
+      .from('payslips')
+      .select('file_url')
+      .eq('id', payslipId)
+      .single();
 
-    if (!payslip) {
+    if (!payslip || selectErr) {
       return c.json({ error: 'Payslip not found' }, 404);
     }
 
     // Delete payslip record
-    await c.env.DB.prepare("DELETE FROM payslips WHERE id = ?").bind(payslipId).run();
+    const { error: deleteErr } = await db
+      .from('payslips')
+      .delete()
+      .eq('id', payslipId);
+
+    if (deleteErr) throw deleteErr;
 
     // Optionally delete file from R2
-    // const filename = (payslip as any).file_url.replace('/api/files/', '');
+    // const filename = payslip.file_url.replace('/api/files/', '');
     // await c.env.R2_BUCKET.delete(filename);
 
     return c.json({ success: true });
