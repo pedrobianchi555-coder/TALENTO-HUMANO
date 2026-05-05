@@ -6544,28 +6544,32 @@ app.get("/api/family-dependents", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
     const queryUserId = c.req.query('user_id');
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const currentUserId = (userProfile as any).id;
-    
     // If user_id is provided and user is HR, get that user's dependents
     // Otherwise, get current user's dependents
-    const targetUserId = queryUserId && userProfile.role === 'HR' 
-      ? parseInt(queryUserId) 
-      : currentUserId;
+    const targetUserId = queryUserId && userProfile.role === 'HR'
+      ? parseInt(queryUserId)
+      : userProfile.id;
 
-    const dependents = await c.env.DB.prepare(
-      "SELECT * FROM family_dependents WHERE user_id = ? ORDER BY created_at DESC"
-    ).bind(targetUserId).all();
+    const { data: dependents, error: depErr } = await db
+      .from('family_dependents')
+      .select('*')
+      .eq('user_id', targetUserId)
+      .order('created_at', { ascending: false });
 
-    return c.json(dependents.results || []);
+    if (depErr) throw depErr;
+
+    return c.json(dependents || []);
   } catch (error) {
     console.error('Error getting family dependents:', error);
     return c.json({ error: 'Failed to get family dependents' }, 500);
@@ -6576,19 +6580,19 @@ app.post("/api/family-dependents", authMiddleware, rateLimiter(RateLimits.MUTATI
   try {
     const mochaUser = c.get("user") as MochaUser;
     const { user_id, full_name, relationship, ci, birth_date } = await c.req.json();
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const currentUserId = (userProfile as any).id;
-    
     // Validate user can add dependent
-    if (user_id !== currentUserId && userProfile.role !== 'HR') {
+    if (user_id !== userProfile.id && userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
@@ -6602,14 +6606,21 @@ app.post("/api/family-dependents", authMiddleware, rateLimiter(RateLimits.MUTATI
       return c.json({ error: 'Full name and relationship are required' }, 400);
     }
 
-    const result = await c.env.DB.prepare(`
-      INSERT INTO family_dependents (user_id, full_name, relationship, ci, birth_date)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(user_id, cleanFullName, cleanRelationship, cleanCI, cleanBirthDate).run();
+    const { data: dependent, error: insertErr } = await db
+      .from('family_dependents')
+      .insert({
+        user_id,
+        full_name: cleanFullName,
+        relationship: cleanRelationship,
+        ci: cleanCI,
+        birth_date: cleanBirthDate,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select('*')
+      .single();
 
-    const dependent = await c.env.DB.prepare(
-      "SELECT * FROM family_dependents WHERE id = ?"
-    ).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
     return c.json(dependent);
   } catch (error) {
@@ -6623,28 +6634,30 @@ app.put("/api/family-dependents/:id", authMiddleware, rateLimiter(RateLimits.MUT
     const mochaUser = c.get("user") as MochaUser;
     const dependentId = parseInt(c.req.param('id'));
     const { full_name, relationship, ci, birth_date } = await c.req.json();
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
     // Get dependent to check ownership
-    const dependent = await c.env.DB.prepare(
-      "SELECT user_id FROM family_dependents WHERE id = ?"
-    ).bind(dependentId).first();
+    const { data: dependent, error: depErr } = await db
+      .from('family_dependents')
+      .select('user_id')
+      .eq('id', dependentId)
+      .single();
 
-    if (!dependent) {
+    if (!dependent || depErr) {
       return c.json({ error: 'Dependent not found' }, 404);
     }
 
-    const currentUserId = (userProfile as any).id;
-    
     // Validate user can edit dependent
-    if ((dependent as any).user_id !== currentUserId && userProfile.role !== 'HR') {
+    if (dependent.user_id !== userProfile.id && userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
@@ -6658,15 +6671,26 @@ app.put("/api/family-dependents/:id", authMiddleware, rateLimiter(RateLimits.MUT
       return c.json({ error: 'Full name and relationship are required' }, 400);
     }
 
-    await c.env.DB.prepare(`
-      UPDATE family_dependents SET
-        full_name = ?, relationship = ?, ci = ?, birth_date = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(cleanFullName, cleanRelationship, cleanCI, cleanBirthDate, dependentId).run();
+    const { error: updateErr } = await db
+      .from('family_dependents')
+      .update({
+        full_name: cleanFullName,
+        relationship: cleanRelationship,
+        ci: cleanCI,
+        birth_date: cleanBirthDate,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', dependentId);
 
-    const updated = await c.env.DB.prepare(
-      "SELECT * FROM family_dependents WHERE id = ?"
-    ).bind(dependentId).first();
+    if (updateErr) throw updateErr;
+
+    const { data: updated, error: selectErr } = await db
+      .from('family_dependents')
+      .select('*')
+      .eq('id', dependentId)
+      .single();
+
+    if (selectErr) throw selectErr;
 
     return c.json(updated);
   } catch (error) {
@@ -6679,32 +6703,39 @@ app.delete("/api/family-dependents/:id", authMiddleware, rateLimiter(RateLimits.
   try {
     const mochaUser = c.get("user") as MochaUser;
     const dependentId = parseInt(c.req.param('id'));
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
     // Get dependent to check ownership
-    const dependent = await c.env.DB.prepare(
-      "SELECT user_id FROM family_dependents WHERE id = ?"
-    ).bind(dependentId).first();
+    const { data: dependent, error: depErr } = await db
+      .from('family_dependents')
+      .select('user_id')
+      .eq('id', dependentId)
+      .single();
 
-    if (!dependent) {
+    if (!dependent || depErr) {
       return c.json({ error: 'Dependent not found' }, 404);
     }
 
-    const currentUserId = (userProfile as any).id;
-    
     // Validate user can delete dependent
-    if ((dependent as any).user_id !== currentUserId && userProfile.role !== 'HR') {
+    if (dependent.user_id !== userProfile.id && userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
     }
 
-    await c.env.DB.prepare("DELETE FROM family_dependents WHERE id = ?").bind(dependentId).run();
+    const { error: deleteErr } = await db
+      .from('family_dependents')
+      .delete()
+      .eq('id', dependentId);
+
+    if (deleteErr) throw deleteErr;
 
     return c.json({ success: true });
   } catch (error) {
