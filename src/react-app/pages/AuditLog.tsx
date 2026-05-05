@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Shield, Download } from 'lucide-react';
-import { useAuth } from "@getmocha/users-service/react";
+import { useAuth } from "@/react-app/contexts/AuthContext";
 import { useNavigate } from 'react-router';
 
 interface AuditLogEntry {

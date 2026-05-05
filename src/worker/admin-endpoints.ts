@@ -1,14 +1,13 @@
 import { Hono } from "hono";
-import { authMiddleware } from "@getmocha/users-service/backend";
+import { authMiddleware, type AuthUser as MochaUser } from "./supabase-auth";
 import { PERMISSIONS, ROLE_PRESETS } from "./permissions";
 import { rateLimiter, RateLimits } from "./rate-limiter";
 import { logSecurityEvent, SecurityEventType, createSecurityContext } from "./security-logger";
 import * as validator from "./validation";
+import { db } from "./db";
 
 type Bindings = {
-  DB: D1Database;
-  MOCHA_USERS_SERVICE_API_URL: string;
-  MOCHA_USERS_SERVICE_API_KEY: string;
+  SUPABASE_JWT_SECRET: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -16,29 +15,22 @@ const app = new Hono<{ Bindings: Bindings }>();
 // Get all HR users (for permission management)
 app.get("/api/admin/hr-users", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user");
-    if (!mochaUser) {
-      return c.json({ error: 'User not found' }, 401);
-    }
-    
-    // Get current user's profile to check if they're admin
-    const userProfile = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const mochaUser = c.get("user") as MochaUser;
+
+    const { data: userProfile } = await db
+      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    // Get all HR users
-    const hrUsers = await c.env.DB.prepare(`
-      SELECT id, mocha_user_id, first_name, last_name, email, hr_permissions, created_at, updated_at
-      FROM users 
-      WHERE role = 'HR' 
-      ORDER BY first_name, last_name
-    `).all();
+    const { data: hrUsers } = await db
+      .from('users')
+      .select('id, mocha_user_id, first_name, last_name, email, hr_permissions, created_at, updated_at')
+      .eq('role', 'HR')
+      .order('first_name');
 
-    const usersWithParsedPermissions = (hrUsers.results || []).map((user: any) => ({
+    const usersWithParsedPermissions = (hrUsers || []).map((user: any) => ({
       ...user,
       permissions: user.hr_permissions ? JSON.parse(user.hr_permissions) : []
     }));
@@ -53,10 +45,7 @@ app.get("/api/admin/hr-users", authMiddleware, async (c) => {
 // Update HR user permissions
 app.put("/api/admin/hr-users/:id/permissions", authMiddleware, rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
-    const mochaUser = c.get("user");
-    if (!mochaUser) {
-      return c.json({ error: 'User not found' }, 401);
-    }
+    const mochaUser = c.get("user") as MochaUser;
     const targetUserId = validator.validateInteger(c.req.param('id'), 1);
     const { permissions } = await c.req.json();
 
@@ -70,10 +59,8 @@ app.put("/api/admin/hr-users/:id/permissions", authMiddleware, rateLimiter(RateL
       return c.json({ error: 'Invalid user ID' }, 400);
     }
 
-    // Get current user's profile to check if they're admin
-    const userProfile = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile } = await db
+      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       logSecurityEvent({
@@ -85,63 +72,43 @@ app.put("/api/admin/hr-users/:id/permissions", authMiddleware, rateLimiter(RateL
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    // Validate permissions array
     if (!Array.isArray(permissions)) {
-      logSecurityEvent({
-        ...createSecurityContext(c),
-        type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
-        details: { field: 'permissions', type: typeof permissions }
-      });
       return c.json({ error: 'Permissions must be an array' }, 400);
     }
 
-    // Validate each permission is a valid string from PERMISSIONS
     const validPermissions = Object.values(PERMISSIONS);
-    const invalidPerms = permissions.filter(p => !validPermissions.includes(p));
-    
+    const invalidPerms = permissions.filter((p: string) => !validPermissions.includes(p as any));
     if (invalidPerms.length > 0) {
-      logSecurityEvent({
-        ...createSecurityContext(c),
-        type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
-        details: { invalidPermissions: invalidPerms }
-      });
       return c.json({ error: 'Invalid permissions in array' }, 400);
     }
 
-    // Log permission change
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.PERMISSION_CHANGED,
       userId: mochaUser.id,
-      userEmail: (userProfile as any).email,
-      details: { 
-        targetUserId,
-        permissionsCount: permissions.length,
-        action: 'update_permissions'
-      }
+      userEmail: userProfile.email,
+      details: { targetUserId, permissionsCount: permissions.length }
     });
 
-    // Update user permissions
-    await c.env.DB.prepare(`
-      UPDATE users 
-      SET hr_permissions = ?, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ? AND role = 'HR'
-    `).bind(JSON.stringify(permissions), targetUserId).run();
+    const { error: updateErr } = await db
+      .from('users')
+      .update({ hr_permissions: JSON.stringify(permissions), updated_at: new Date().toISOString() })
+      .eq('id', targetUserId)
+      .eq('role', 'HR');
 
-    // Get updated user
-    const updatedUser = await c.env.DB.prepare(
-      "SELECT id, mocha_user_id, first_name, last_name, email, hr_permissions, created_at, updated_at FROM users WHERE id = ?"
-    ).bind(targetUserId).first();
+    if (updateErr) throw updateErr;
 
-    if (!updatedUser) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+    const { data: updatedUser } = await db
+      .from('users')
+      .select('id, mocha_user_id, first_name, last_name, email, hr_permissions, created_at, updated_at')
+      .eq('id', targetUserId)
+      .single();
+
+    if (!updatedUser) return c.json({ error: 'User not found' }, 404);
 
     return c.json({
       ...updatedUser,
-      permissions: updatedUser.hr_permissions ? JSON.parse(updatedUser.hr_permissions as string) : []
+      permissions: updatedUser.hr_permissions ? JSON.parse(updatedUser.hr_permissions) : []
     });
   } catch (error) {
     console.error('Error updating HR user permissions:', error);
@@ -152,24 +119,16 @@ app.put("/api/admin/hr-users/:id/permissions", authMiddleware, rateLimiter(RateL
 // Get available permissions and role presets
 app.get("/api/admin/permissions-config", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user");
-    if (!mochaUser) {
-      return c.json({ error: 'User not found' }, 401);
-    }
-    
-    // Get current user's profile to check if they're admin
-    const userProfile = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const mochaUser = c.get("user") as MochaUser;
+
+    const { data: userProfile } = await db
+      .from('users').select('role').eq('mocha_user_id', mochaUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    return c.json({
-      permissions: PERMISSIONS,
-      rolePresets: ROLE_PRESETS
-    });
+    return c.json({ permissions: PERMISSIONS, rolePresets: ROLE_PRESETS });
   } catch (error) {
     console.error('Error getting permissions config:', error);
     return c.json({ error: 'Failed to get permissions config' }, 500);
@@ -179,47 +138,39 @@ app.get("/api/admin/permissions-config", authMiddleware, async (c) => {
 // Apply role preset to user
 app.post("/api/admin/hr-users/:id/apply-preset", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user");
-    if (!mochaUser) {
-      return c.json({ error: 'User not found' }, 401);
-    }
+    const mochaUser = c.get("user") as MochaUser;
     const targetUserId = parseInt(c.req.param('id'));
     const { preset } = await c.req.json();
 
-    // Get current user's profile to check if they're admin
-    const userProfile = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile } = await db
+      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    // Validate preset exists
     const presetPermissions = (ROLE_PRESETS as any)[preset];
-    if (!presetPermissions) {
-      return c.json({ error: 'Invalid preset' }, 400);
-    }
+    if (!presetPermissions) return c.json({ error: 'Invalid preset' }, 400);
 
-    // Update user permissions with preset
-    await c.env.DB.prepare(`
-      UPDATE users 
-      SET hr_permissions = ?, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ? AND role = 'HR'
-    `).bind(JSON.stringify(presetPermissions), targetUserId).run();
+    const { error: updateErr } = await db
+      .from('users')
+      .update({ hr_permissions: JSON.stringify(presetPermissions), updated_at: new Date().toISOString() })
+      .eq('id', targetUserId)
+      .eq('role', 'HR');
 
-    // Get updated user
-    const updatedUser = await c.env.DB.prepare(
-      "SELECT id, mocha_user_id, first_name, last_name, email, hr_permissions, created_at, updated_at FROM users WHERE id = ?"
-    ).bind(targetUserId).first();
+    if (updateErr) throw updateErr;
 
-    if (!updatedUser) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+    const { data: updatedUser } = await db
+      .from('users')
+      .select('id, mocha_user_id, first_name, last_name, email, hr_permissions, created_at, updated_at')
+      .eq('id', targetUserId)
+      .single();
+
+    if (!updatedUser) return c.json({ error: 'User not found' }, 404);
 
     return c.json({
       ...updatedUser,
-      permissions: updatedUser.hr_permissions ? JSON.parse(updatedUser.hr_permissions as string) : []
+      permissions: updatedUser.hr_permissions ? JSON.parse(updatedUser.hr_permissions) : []
     });
   } catch (error) {
     console.error('Error applying preset to HR user:', error);
@@ -230,29 +181,23 @@ app.post("/api/admin/hr-users/:id/apply-preset", authMiddleware, async (c) => {
 // Get all active employees (non-HR users)
 app.get("/api/admin/employees-list", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user");
-    if (!mochaUser) {
-      return c.json({ error: 'User not found' }, 401);
-    }
-    
-    // Get current user's profile to check if they're admin
-    const userProfile = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const mochaUser = c.get("user") as MochaUser;
+
+    const { data: userProfile } = await db
+      .from('users').select('role').eq('mocha_user_id', mochaUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    // Get all active employees who are not HR
-    const employees = await c.env.DB.prepare(`
-      SELECT id, mocha_user_id, first_name, last_name, email, department, position, created_at
-      FROM users 
-      WHERE role = 'EMPLOYEE' AND status = 'ACTIVE'
-      ORDER BY first_name, last_name
-    `).all();
+    const { data: employees } = await db
+      .from('users')
+      .select('id, mocha_user_id, first_name, last_name, email, department, position, created_at')
+      .eq('role', 'EMPLOYEE')
+      .eq('status', 'ACTIVE')
+      .order('first_name');
 
-    return c.json(employees.results || []);
+    return c.json(employees || []);
   } catch (error) {
     console.error('Error getting employees list:', error);
     return c.json({ error: 'Failed to get employees list' }, 500);
@@ -262,75 +207,54 @@ app.get("/api/admin/employees-list", authMiddleware, async (c) => {
 // Promote employee to HR
 app.post("/api/admin/promote-to-hr/:id", authMiddleware, rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
-    const mochaUser = c.get("user");
-    if (!mochaUser) {
-      return c.json({ error: 'User not found' }, 401);
-    }
+    const mochaUser = c.get("user") as MochaUser;
     const employeeId = validator.validateInteger(c.req.param('id'), 1);
     const { preset } = await c.req.json();
 
-    if (!employeeId) {
-      return c.json({ error: 'Invalid employee ID' }, 400);
-    }
+    if (!employeeId) return c.json({ error: 'Invalid employee ID' }, 400);
 
-    // Get current user's profile to check if they're admin
-    const userProfile = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile } = await db
+      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    // Validate employee exists and is not already HR
-    const employee = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE id = ?"
-    ).bind(employeeId).first();
+    const { data: employee } = await db
+      .from('users').select('*').eq('id', employeeId).single();
 
-    if (!employee) {
-      return c.json({ error: 'Employee not found' }, 404);
-    }
+    if (!employee) return c.json({ error: 'Employee not found' }, 404);
+    if (employee.role === 'HR') return c.json({ error: 'User is already HR' }, 400);
 
-    if ((employee as any).role === 'HR') {
-      return c.json({ error: 'User is already HR' }, 400);
-    }
-
-    // Get permissions from preset if provided
     let permissions: string[] = [];
     if (preset && (ROLE_PRESETS as any)[preset]) {
       permissions = (ROLE_PRESETS as any)[preset];
     }
 
-    // Log role change
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.USER_ROLE_CHANGED,
       userId: mochaUser.id,
-      userEmail: (userProfile as any).email,
-      details: { 
-        targetUserId: employeeId,
-        targetEmail: (employee as any).email,
-        oldRole: 'EMPLOYEE',
-        newRole: 'HR',
-        preset: preset || 'none'
-      }
+      userEmail: userProfile.email,
+      details: { targetUserId: employeeId, targetEmail: employee.email, oldRole: 'EMPLOYEE', newRole: 'HR', preset: preset || 'none' }
     });
 
-    // Promote employee to HR
-    await c.env.DB.prepare(`
-      UPDATE users 
-      SET role = 'HR', hr_permissions = ?, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ?
-    `).bind(JSON.stringify(permissions), employeeId).run();
+    const { error: updateErr } = await db
+      .from('users')
+      .update({ role: 'HR', hr_permissions: JSON.stringify(permissions), updated_at: new Date().toISOString() })
+      .eq('id', employeeId);
 
-    // Get the updated user
-    const updatedUser = await c.env.DB.prepare(
-      "SELECT id, mocha_user_id, first_name, last_name, email, hr_permissions, created_at, updated_at FROM users WHERE id = ?"
-    ).bind(employeeId).first();
+    if (updateErr) throw updateErr;
+
+    const { data: updatedUser } = await db
+      .from('users')
+      .select('id, mocha_user_id, first_name, last_name, email, hr_permissions, created_at, updated_at')
+      .eq('id', employeeId)
+      .single();
 
     return c.json({
       ...updatedUser,
-      permissions: updatedUser!.hr_permissions ? JSON.parse((updatedUser as any).hr_permissions) : []
+      permissions: updatedUser?.hr_permissions ? JSON.parse(updatedUser.hr_permissions) : []
     });
   } catch (error) {
     console.error('Error promoting employee to HR:', error);
@@ -341,63 +265,42 @@ app.post("/api/admin/promote-to-hr/:id", authMiddleware, rateLimiter(RateLimits.
 // Demote HR user to employee
 app.post("/api/admin/demote-from-hr/:id", authMiddleware, rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
-    const mochaUser = c.get("user");
-    if (!mochaUser) {
-      return c.json({ error: 'User not found' }, 401);
-    }
+    const mochaUser = c.get("user") as MochaUser;
     const hrUserId = validator.validateInteger(c.req.param('id'), 1);
 
-    if (!hrUserId) {
-      return c.json({ error: 'Invalid user ID' }, 400);
-    }
+    if (!hrUserId) return c.json({ error: 'Invalid user ID' }, 400);
 
-    // Get current user's profile to check if they're admin
-    const userProfile = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile } = await db
+      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
 
-    // Prevent demoting yourself
-    if ((userProfile as any).id === hrUserId) {
+    if (userProfile.id === hrUserId) {
       return c.json({ error: 'Cannot demote yourself' }, 400);
     }
 
-    // Validate user exists and is HR
-    const hrUser = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE id = ?"
-    ).bind(hrUserId).first();
+    const { data: hrUser } = await db
+      .from('users').select('*').eq('id', hrUserId).single();
 
-    if (!hrUser) {
-      return c.json({ error: 'User not found' }, 404);
-    }
+    if (!hrUser) return c.json({ error: 'User not found' }, 404);
+    if (hrUser.role !== 'HR') return c.json({ error: 'User is not HR' }, 400);
 
-    if ((hrUser as any).role !== 'HR') {
-      return c.json({ error: 'User is not HR' }, 400);
-    }
-
-    // Log role change
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.USER_ROLE_CHANGED,
       userId: mochaUser.id,
-      userEmail: (userProfile as any).email,
-      details: { 
-        targetUserId: hrUserId,
-        targetEmail: (hrUser as any).email,
-        oldRole: 'HR',
-        newRole: 'EMPLOYEE'
-      }
+      userEmail: userProfile.email,
+      details: { targetUserId: hrUserId, targetEmail: hrUser.email, oldRole: 'HR', newRole: 'EMPLOYEE' }
     });
 
-    // Demote HR user to employee
-    await c.env.DB.prepare(`
-      UPDATE users 
-      SET role = 'EMPLOYEE', hr_permissions = NULL, updated_at = CURRENT_TIMESTAMP 
-      WHERE id = ?
-    `).bind(hrUserId).run();
+    const { error: updateErr } = await db
+      .from('users')
+      .update({ role: 'EMPLOYEE', hr_permissions: null, updated_at: new Date().toISOString() })
+      .eq('id', hrUserId);
+
+    if (updateErr) throw updateErr;
 
     return c.json({ success: true });
   } catch (error) {

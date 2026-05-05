@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { authMiddleware } from "@getmocha/users-service/backend";
+import { authMiddleware } from "./supabase-auth";
 import { createOpenAIService } from "../shared/openai";
 
 type Bindings = {

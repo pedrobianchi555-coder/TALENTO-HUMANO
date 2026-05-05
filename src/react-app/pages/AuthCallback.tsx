@@ -1,35 +1,36 @@
 import { useEffect } from "react";
-import { useAuth } from "@getmocha/users-service/react";
 import { useNavigate } from "react-router";
+import { supabase } from "@/react-app/lib/supabase";
 import { Loader2 } from "lucide-react";
 
 export default function AuthCallback() {
-  const { exchangeCodeForSessionToken, user } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    const handleAuthCallback = async () => {
+    const handleCallback = async () => {
       try {
-        await exchangeCodeForSessionToken();
+        const { data, error } = await supabase.auth.exchangeCodeForSession(window.location.href);
+
+        if (error) {
+          console.error("Auth callback error:", error);
+          alert(`No se pudo completar el inicio de sesión: ${error.message}\n\nPor favor, intenta nuevamente.`);
+          navigate("/");
+          return;
+        }
+
+        if (data.session) {
+          navigate("/dashboard");
+        } else {
+          navigate("/");
+        }
       } catch (error) {
-        console.error("Error during auth callback:", error);
-        
-        // Show user-friendly error message
-        const errorMessage = error instanceof Error ? error.message : 'Error de autenticación';
-        alert(`No se pudo completar el inicio de sesión: ${errorMessage}\n\nPor favor, intenta nuevamente.`);
-        
+        console.error("Unexpected error during auth callback:", error);
         navigate("/");
       }
     };
 
-    handleAuthCallback();
-  }, [exchangeCodeForSessionToken, navigate]);
-
-  useEffect(() => {
-    if (user) {
-      navigate("/dashboard");
-    }
-  }, [user, navigate]);
+    handleCallback();
+  }, [navigate]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">

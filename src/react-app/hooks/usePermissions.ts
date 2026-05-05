@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useAuth } from "@getmocha/users-service/react";
+import { useAuth } from "@/react-app/contexts/AuthContext";
 import type { EnhancedUser } from "@/shared/types";
 
 export const PERMISSIONS = {

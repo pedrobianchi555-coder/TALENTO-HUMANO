@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useLocation } from "react-router";
-import { useAuth } from "@getmocha/users-service/react";
+import { useAuth } from "@/react-app/contexts/AuthContext";
 import {
   Users,
   FileText,

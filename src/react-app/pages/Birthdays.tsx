@@ -1,4 +1,4 @@
-import { useAuth } from "@getmocha/users-service/react";
+import { useAuth } from "@/react-app/contexts/AuthContext";
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router";
 import { Loader2, Cake, Calendar, Users, PartyPopper } from "lucide-react";

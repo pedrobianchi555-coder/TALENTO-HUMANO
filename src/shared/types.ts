@@ -1,7 +1,10 @@
-export interface MochaUser {
+export interface AuthUser {
   id: string;
   email: string;
 }
+
+/** @deprecated Use AuthUser */
+export type MochaUser = AuthUser;
 
 export interface UserProfile {
   id: number;
@@ -31,11 +34,13 @@ export interface UserProfile {
   boots_size?: string;
 }
 
-export interface EnhancedUser extends MochaUser {
+export interface EnhancedUser extends AuthUser {
   profile?: UserProfile;
   google_user_data?: {
     picture?: string;
     name?: string;
+    given_name?: string;
+    family_name?: string;
   };
 }
 

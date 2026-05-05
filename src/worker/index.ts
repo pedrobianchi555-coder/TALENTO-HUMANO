@@ -1,14 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import {
-  authMiddleware,
-  exchangeCodeForSessionToken,
-  getOAuthRedirectUrl,
-  deleteSession,
-  MOCHA_SESSION_TOKEN_COOKIE_NAME,
-} from "@getmocha/users-service/backend";
-import { getCookie, setCookie } from "hono/cookie";
-import type { MochaUser } from "@getmocha/users-service/shared";
+import { authMiddleware, type AuthUser as MochaUser } from "./supabase-auth";
 import { createOpenAIService } from "../shared/openai";
 import aiRoutes from "./ai-endpoints";
 import adminRoutes from "./admin-endpoints";
@@ -27,8 +19,7 @@ type Bindings = {
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
-  MOCHA_USERS_SERVICE_API_URL: string;
-  MOCHA_USERS_SERVICE_API_KEY: string;
+  SUPABASE_JWT_SECRET: string;
   OPENAI_API_KEY: string;
   R2_BUCKET?: R2Bucket;
 };
@@ -57,94 +48,6 @@ app.route('/', adminRoutes);
 // Mount WhatsApp routes
 app.route('/', whatsappRoutes);
 
-// OAuth redirect URL endpoint
-app.get('/api/oauth/google/redirect_url', async (c) => {
-  try {
-    const redirectUrl = await getOAuthRedirectUrl('google', {
-      apiUrl: c.env.MOCHA_USERS_SERVICE_API_URL,
-      apiKey: c.env.MOCHA_USERS_SERVICE_API_KEY,
-    });
-
-    return c.json({ redirectUrl }, 200);
-  } catch (error) {
-    console.error('Error getting OAuth redirect URL:', error);
-    return c.json({ error: 'Failed to get redirect URL' }, 500);
-  }
-});
-
-// Exchange code for session token
-app.post("/api/sessions", rateLimiter(RateLimits.AUTH), async (c) => {
-  try {
-    console.log('[AUTH] Session token exchange initiated');
-    const body = await c.req.json();
-
-    if (!body.code) {
-      console.error('[AUTH] No authorization code provided');
-      logSecurityEvent({
-        ...createSecurityContext(c),
-        type: SecurityEventType.INVALID_INPUT,
-        details: { reason: 'Missing authorization code' }
-      });
-      return c.json({ error: "No authorization code provided" }, 400);
-    }
-
-    console.log('[AUTH] Calling exchangeCodeForSessionToken with code');
-    const sessionToken = await exchangeCodeForSessionToken(body.code, {
-      apiUrl: c.env.MOCHA_USERS_SERVICE_API_URL,
-      apiKey: c.env.MOCHA_USERS_SERVICE_API_KEY,
-    });
-
-    console.log('[AUTH] Session token received successfully');
-
-    setCookie(c, MOCHA_SESSION_TOKEN_COOKIE_NAME, sessionToken, {
-      httpOnly: true,
-      path: "/",
-      sameSite: "none",
-      secure: true,
-      maxAge: 60 * 24 * 60 * 60, // 60 days
-    });
-
-    console.log('[AUTH] Cookie set');
-
-    logSecurityEvent({
-      ...createSecurityContext(c),
-      type: SecurityEventType.LOGIN_SUCCESS
-    });
-
-    console.log('[AUTH] Security event logged');
-    console.log('[AUTH] Session exchange completed successfully');
-
-    return c.json({ success: true }, 200);
-  } catch (error) {
-    console.error('[AUTH] Error exchanging code for session token:', error);
-    
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    const errorDetails = {
-      message: errorMessage,
-      stack: error instanceof Error ? error.stack : undefined,
-      apiUrl: c.env.MOCHA_USERS_SERVICE_API_URL ? 'configured' : 'missing',
-      apiKey: c.env.MOCHA_USERS_SERVICE_API_KEY ? 'configured' : 'missing'
-    };
-    
-    console.error('[AUTH] Error details:', errorDetails);
-    
-    // Provide user-friendly error message based on error type
-    let userMessage = 'Error de autenticación. Por favor, intenta nuevamente.';
-    
-    if (errorMessage.includes('fetch')) {
-      userMessage = 'Error de conexión con el servicio de autenticación.';
-    } else if (errorMessage.includes('timeout')) {
-      userMessage = 'El servicio de autenticación tardó demasiado en responder.';
-    } else if (errorMessage.includes('API responded with HTTP status 500')) {
-      userMessage = 'Error interno del servidor de autenticación. Por favor, contacta al administrador.';
-    }
-    
-    return c.json({ 
-      error: userMessage,
-      technical_details: errorMessage
-    }, 500);
-  }
-});
 
 // Get current user with enhanced profile
 app.get("/api/users/me", authMiddleware, async (c) => {
@@ -7227,53 +7130,23 @@ app.delete("/api/family-dependents/:id", authMiddleware, rateLimiter(RateLimits.
   }
 });
 
-// Logout endpoint
-app.get('/api/logout', async (c) => {
+// Logout endpoint (session is managed client-side with Supabase Auth)
+app.get('/api/logout', authMiddleware, async (c) => {
   try {
-    const sessionToken = getCookie(c, MOCHA_SESSION_TOKEN_COOKIE_NAME);
+    const user = c.get('user') as MochaUser;
+    try {
+      const { data: userProfile } = await db
+        .from('users')
+        .select('id, email')
+        .eq('mocha_user_id', user.id)
+        .single();
 
-    // Try to log logout action
-    if (typeof sessionToken === 'string') {
-      try {
-        // Get the user from the session via the Mocha Users Service
-        const user = c.get('user') as MochaUser | undefined;
-
-        if (user) {
-          const { data: userProfile, error: userErr } = await db
-            .from('users')
-            .select('id, email')
-            .eq('mocha_user_id', user.id)
-            .single();
-
-          if (userProfile) {
-            await auditLog(
-              db,
-              c,
-              userProfile.id,
-              userProfile.email,
-              AuditAction.LOGOUT,
-              AuditModule.SESSION
-            );
-          }
-        }
-      } catch (err) {
-        console.error('Error logging logout audit:', err);
+      if (userProfile) {
+        await auditLog(db, c, userProfile.id, userProfile.email, AuditAction.LOGOUT, AuditModule.SESSION);
       }
-
-      await deleteSession(sessionToken, {
-        apiUrl: c.env.MOCHA_USERS_SERVICE_API_URL,
-        apiKey: c.env.MOCHA_USERS_SERVICE_API_KEY,
-      });
+    } catch (err) {
+      console.error('Error logging logout audit:', err);
     }
-
-    setCookie(c, MOCHA_SESSION_TOKEN_COOKIE_NAME, '', {
-      httpOnly: true,
-      path: '/',
-      sameSite: 'none',
-      secure: true,
-      maxAge: 0,
-    });
-
     return c.json({ success: true }, 200);
   } catch (error) {
     console.error('Error during logout:', error);

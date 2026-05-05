@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useAuth } from "@getmocha/users-service/react";
+import { useAuth } from "@/react-app/contexts/AuthContext";
 import { useNavigate } from "react-router";
 import { MessageCircle, CheckCircle, XCircle, AlertCircle, ExternalLink, RefreshCw, Loader2 } from "lucide-react";
 import ConfirmationModal from "@/react-app/components/ConfirmationModal";
