@@ -4033,37 +4033,40 @@ app.get("/api/reports/assets", authMiddleware, requirePermission(PERMISSIONS.ASS
     const operationalStatus = c.req.query('operational_status');
     const department = c.req.query('department');
 
-    let query = `
-      SELECT a.*, ac.name as category_name, u.first_name || ' ' || u.last_name as assigned_to_name, u.department as employee_department
-      FROM assets a
-      JOIN asset_categories ac ON a.category_id = ac.id
-      LEFT JOIN users u ON a.assigned_to_id = u.id
-      WHERE 1=1
-    `;
-    const params: (string | number)[] = [];
+    let query = db
+      .from('assets')
+      .select(`
+        *,
+        category:asset_categories (name),
+        assigned_user:users!assets_assigned_to_id_fkey (first_name, last_name, department)
+      `);
 
     if (categoryId) {
-      query += " AND a.category_id = ?";
-      params.push(parseInt(categoryId));
+      query = query.eq('category_id', parseInt(categoryId));
     }
     if (conditionStatus) {
-      query += " AND a.condition_status = ?";
-      params.push(conditionStatus);
+      query = query.eq('condition_status', conditionStatus);
     }
     if (operationalStatus) {
-      query += " AND a.status = ?";
-      params.push(operationalStatus);
+      query = query.eq('status', operationalStatus);
     }
     if (department) {
-      query += " AND u.department = ?";
-      params.push(department);
+      query = query.eq('assigned_user.department', department);
     }
 
-    query += " ORDER BY a.name ASC";
+    const { data: assets, error: assetsErr } = await query.order('name', { ascending: true });
 
-    const assets = await c.env.DB.prepare(query).bind(...params).all();
+    if (assetsErr) throw assetsErr;
 
-    return c.json(assets.results || []);
+    // Format response with flattened data
+    const formattedAssets = (assets || []).map(a => ({
+      ...a,
+      category_name: a.category?.name,
+      assigned_to_name: `${a.assigned_user?.first_name || ''} ${a.assigned_user?.last_name || ''}`.trim(),
+      employee_department: a.assigned_user?.department
+    }));
+
+    return c.json(formattedAssets);
   } catch (error) {
     console.error('Error generating assets report:', error);
     return c.json({ error: 'Failed to generate assets report' }, 500);
@@ -4075,15 +4078,24 @@ app.get("/api/reports/assets/by-employee/:employeeId", authMiddleware, requirePe
   try {
     const employeeId = parseInt(c.req.param('employeeId'));
 
-    const assets = await c.env.DB.prepare(`
-      SELECT a.*, ac.name as category_name
-      FROM assets a
-      JOIN asset_categories ac ON a.category_id = ac.id
-      WHERE a.assigned_to_id = ?
-      ORDER BY a.name ASC
-    `).bind(employeeId).all();
+    const { data: assets, error: assetsErr } = await db
+      .from('assets')
+      .select(`
+        *,
+        category:asset_categories (name)
+      `)
+      .eq('assigned_to_id', employeeId)
+      .order('name', { ascending: true });
 
-    return c.json(assets.results || []);
+    if (assetsErr) throw assetsErr;
+
+    // Format response with flattened data
+    const formattedAssets = (assets || []).map(a => ({
+      ...a,
+      category_name: a.category?.name
+    }));
+
+    return c.json(formattedAssets);
   } catch (error) {
     console.error('Error getting assets by employee:', error);
     return c.json({ error: 'Failed to get assets by employee' }, 500);
@@ -4368,41 +4380,36 @@ app.get("/api/reports/employees", authMiddleware, requirePermission(PERMISSIONS.
     const companyName = c.req.query('company_name');
     const sede = c.req.query('sede');
 
-    let query = `
-      SELECT id, first_name, last_name, email, ci, phone, department,
-             position, payroll_type, base_salary, birth_date, sede,
-             company_name, status, created_at, updated_at
-      FROM users
-      WHERE role = 'EMPLOYEE'
-    `;
-    const params: (string | number)[] = [];
+    let query = db
+      .from('users')
+      .select(`
+        id, first_name, last_name, email, ci, phone, department,
+        position, payroll_type, base_salary, birth_date, sede,
+        company_name, status, created_at, updated_at
+      `)
+      .eq('role', 'EMPLOYEE');
 
     if (status) {
-      query += " AND status = ?";
-      params.push(status);
+      query = query.eq('status', status);
     }
     if (department) {
-      query += " AND department = ?";
-      params.push(department);
+      query = query.eq('department', department);
     }
     if (payrollType) {
-      query += " AND payroll_type = ?";
-      params.push(payrollType);
+      query = query.eq('payroll_type', payrollType);
     }
     if (companyName) {
-      query += " AND company_name = ?";
-      params.push(companyName);
+      query = query.eq('company_name', companyName);
     }
     if (sede) {
-      query += " AND sede = ?";
-      params.push(sede);
+      query = query.eq('sede', sede);
     }
 
-    query += " ORDER BY first_name, last_name ASC";
+    const { data: employees, error: empErr } = await query.order('first_name', { ascending: true }).order('last_name', { ascending: true });
 
-    const employees = await c.env.DB.prepare(query).bind(...params).all();
+    if (empErr) throw empErr;
 
-    return c.json(employees.results || []);
+    return c.json(employees || []);
   } catch (error) {
     console.error('Error generating employees report:', error);
     return c.json({ error: 'Failed to generate employees report' }, 500);
@@ -5529,40 +5536,43 @@ app.get("/api/reports/requests", authMiddleware, requirePermission(PERMISSIONS.R
     const startDate = c.req.query('start_date');
     const endDate = c.req.query('end_date');
 
-    let query = `
-      SELECT r.*, u.first_name, u.last_name, u.email, u.department
-      FROM requests r
-      JOIN users u ON r.user_id = u.id
-      WHERE 1=1
-    `;
-    const params: (string | number)[] = [];
+    let query = db
+      .from('requests')
+      .select(`
+        *,
+        user:users (first_name, last_name, email, department)
+      `);
 
     if (status) {
-      query += " AND r.status = ?";
-      params.push(status);
+      query = query.eq('status', status);
     }
     if (category) {
-      query += " AND r.category = ?";
-      params.push(category);
+      query = query.eq('category', category);
     }
     if (type) {
-      query += " AND r.type LIKE ?";
-      params.push(`%${type}%`);
+      query = query.ilike('type', `%${type}%`);
     }
     if (startDate) {
-      query += " AND r.created_at >= ?";
-      params.push(startDate);
+      query = query.gte('created_at', startDate);
     }
     if (endDate) {
-      query += " AND r.created_at <= ?";
-      params.push(endDate + ' 23:59:59');
+      query = query.lte('created_at', endDate + 'T23:59:59');
     }
 
-    query += " ORDER BY r.created_at DESC";
+    const { data: requests, error: reqErr } = await query.order('created_at', { ascending: false });
 
-    const requests = await c.env.DB.prepare(query).bind(...params).all();
+    if (reqErr) throw reqErr;
 
-    return c.json(requests.results || []);
+    // Format response with flattened user data
+    const formattedRequests = (requests || []).map(r => ({
+      ...r,
+      first_name: r.user?.first_name,
+      last_name: r.user?.last_name,
+      email: r.user?.email,
+      department: r.user?.department
+    }));
+
+    return c.json(formattedRequests);
   } catch (error) {
     console.error('Error generating requests report:', error);
     return c.json({ error: 'Failed to generate requests report' }, 500);
@@ -5787,44 +5797,47 @@ app.get("/api/reports/loans", authMiddleware, requirePermission(PERMISSIONS.LOAN
     const startDate = c.req.query('start_date');
     const endDate = c.req.query('end_date');
 
-    let query = `
-      SELECT l.*, 
-             u.first_name || ' ' || u.last_name as employee_name,
-             u.email as employee_email,
-             (SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id) as total_paid,
-             (l.principal_amount - COALESCE((SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id), 0)) as pending_amount
-      FROM loans l
-      JOIN users u ON l.user_id = u.id
-      WHERE 1=1
-    `;
-    const params: (string | number)[] = [];
+    let query = db
+      .from('loans')
+      .select(`
+        *,
+        user:users (first_name, last_name, email),
+        payments:loan_payments (amount_paid)
+      `);
 
     if (status) {
-      query += " AND l.status = ?";
-      params.push(status);
+      query = query.eq('status', status);
     }
     if (category) {
-      query += " AND l.category = ?";
-      params.push(category);
+      query = query.eq('category', category);
     }
     if (employeeId) {
-      query += " AND l.user_id = ?";
-      params.push(parseInt(employeeId));
+      query = query.eq('user_id', parseInt(employeeId));
     }
     if (startDate) {
-      query += " AND l.issue_date >= ?";
-      params.push(startDate);
+      query = query.gte('issue_date', startDate);
     }
     if (endDate) {
-      query += " AND l.issue_date <= ?";
-      params.push(endDate);
+      query = query.lte('issue_date', endDate);
     }
 
-    query += " ORDER BY l.created_at DESC";
+    const { data: loans, error: loansErr } = await query.order('created_at', { ascending: false });
 
-    const loans = await c.env.DB.prepare(query).bind(...params).all();
+    if (loansErr) throw loansErr;
 
-    return c.json(loans.results || []);
+    // Format response with calculated fields
+    const formattedLoans = (loans || []).map(l => {
+      const totalPaid = (l.payments || []).reduce((sum, p) => sum + (p.amount_paid || 0), 0);
+      return {
+        ...l,
+        employee_name: `${l.user?.first_name || ''} ${l.user?.last_name || ''}`.trim(),
+        employee_email: l.user?.email,
+        total_paid: totalPaid,
+        pending_amount: l.principal_amount - totalPaid
+      };
+    });
+
+    return c.json(formattedLoans);
   } catch (error) {
     console.error('Error generating loans report:', error);
     return c.json({ error: 'Failed to generate loans report' }, 500);
@@ -6071,62 +6084,53 @@ app.get("/api/reports/request-response-times", authMiddleware, requirePermission
     const requestCategory = c.req.query('category');
     const resolvedById = c.req.query('resolved_by_id');
 
-    // Build base query for completed requests
-    let query = `
-      SELECT 
-        r.*,
-        u.first_name || ' ' || u.last_name as employee_name,
-        u.email as employee_email,
-        resolver.first_name || ' ' || resolver.last_name as resolver_name,
-        CAST((julianday(r.updated_at) - julianday(r.created_at)) * 24 * 60 AS INTEGER) as response_time_minutes
-      FROM requests r
-      JOIN users u ON r.user_id = u.id
-      LEFT JOIN users resolver ON r.resolved_by_id = resolver.id
-      WHERE r.status IN ('APPROVED', 'REJECTED')
-    `;
-    
-    const params: any[] = [];
+    // Query for completed requests
+    let query = db
+      .from('requests')
+      .select(`
+        *,
+        user:users (first_name, last_name, email),
+        resolver:users!requests_resolved_by_id_fkey (first_name, last_name)
+      `)
+      .in('status', ['APPROVED', 'REJECTED']);
 
     if (startDate) {
-      query += " AND r.created_at >= ?";
-      params.push(startDate);
+      query = query.gte('created_at', startDate);
     }
-
     if (endDate) {
-      query += " AND r.created_at <= ?";
-      params.push(endDate + ' 23:59:59');
+      query = query.lte('created_at', endDate + 'T23:59:59');
     }
-
     if (requestType) {
-      query += " AND r.type = ?";
-      params.push(requestType);
+      query = query.eq('type', requestType);
     }
-
     if (requestCategory) {
-      query += " AND r.category = ?";
-      params.push(requestCategory);
+      query = query.eq('category', requestCategory);
     }
-
     if (resolvedById) {
-      query += " AND r.resolved_by_id = ?";
-      params.push(parseInt(resolvedById));
+      query = query.eq('resolved_by_id', parseInt(resolvedById));
     }
 
-    query += " ORDER BY r.updated_at DESC";
+    const { data: requests, error: reqErr } = await query.order('updated_at', { ascending: false });
 
-    const requests = params.length > 0
-      ? await c.env.DB.prepare(query).bind(...params).all()
-      : await c.env.DB.prepare(query).all();
+    if (reqErr) throw reqErr;
 
-    // Calculate aggregate metrics
-    const requestData = requests.results || [];
-    
+    // Calculate metrics in application
+    const requestData = (requests || []).map(r => ({
+      ...r,
+      employee_name: `${r.user?.first_name || ''} ${r.user?.last_name || ''}`.trim(),
+      employee_email: r.user?.email,
+      resolver_name: r.resolver ? `${r.resolver.first_name || ''} ${r.resolver.last_name || ''}`.trim() : null,
+      response_time_minutes: r.updated_at && r.created_at
+        ? Math.floor((new Date(r.updated_at).getTime() - new Date(r.created_at).getTime()) / (1000 * 60))
+        : 0
+    }));
+
     // Overall metrics
     const totalRequests = requestData.length;
     const avgResponseTime = totalRequests > 0
       ? requestData.reduce((sum: number, r: any) => sum + r.response_time_minutes, 0) / totalRequests
       : 0;
-    
+
     const approvedCount = requestData.filter((r: any) => r.status === 'APPROVED').length;
     const rejectedCount = requestData.filter((r: any) => r.status === 'REJECTED').length;
     const approvalRate = totalRequests > 0 ? (approvedCount / totalRequests) * 100 : 0;
@@ -6147,10 +6151,10 @@ app.get("/api/reports/request-response-times", authMiddleware, requirePermission
             approval_rate: 0
           };
         }
-        
+
         byResolver[r.resolved_by_id].total_requests++;
         byResolver[r.resolved_by_id].total_response_time += r.response_time_minutes;
-        
+
         if (r.status === 'APPROVED') {
           byResolver[r.resolved_by_id].approved_count++;
         } else if (r.status === 'REJECTED') {
@@ -6159,10 +6163,10 @@ app.get("/api/reports/request-response-times", authMiddleware, requirePermission
       }
     });
 
-    // Calculate averages for each resolver
+    // Calculate averages
     Object.values(byResolver).forEach((resolver: any) => {
-      resolver.avg_response_time = resolver.total_response_time / resolver.total_requests;
-      resolver.approval_rate = (resolver.approved_count / resolver.total_requests) * 100;
+      resolver.avg_response_time = Math.round(resolver.total_response_time / resolver.total_requests);
+      resolver.approval_rate = Math.round((resolver.approved_count / resolver.total_requests) * 100 * 10) / 10;
     });
 
     // By category
@@ -6176,13 +6180,13 @@ app.get("/api/reports/request-response-times", authMiddleware, requirePermission
           total_response_time: 0
         };
       }
-      
+
       byCategory[r.category].total_requests++;
       byCategory[r.category].total_response_time += r.response_time_minutes;
     });
 
     Object.values(byCategory).forEach((cat: any) => {
-      cat.avg_response_time = cat.total_response_time / cat.total_requests;
+      cat.avg_response_time = Math.round(cat.total_response_time / cat.total_requests);
     });
 
     // By type
@@ -6196,16 +6200,16 @@ app.get("/api/reports/request-response-times", authMiddleware, requirePermission
           total_response_time: 0
         };
       }
-      
+
       byType[r.type].total_requests++;
       byType[r.type].total_response_time += r.response_time_minutes;
     });
 
     Object.values(byType).forEach((t: any) => {
-      t.avg_response_time = t.total_response_time / t.total_requests;
+      t.avg_response_time = Math.round(t.total_response_time / t.total_requests);
     });
 
-    // Top 10 slowest and fastest requests
+    // Top 10 slowest and fastest
     const sortedByTime = [...requestData].sort((a: any, b: any) => b.response_time_minutes - a.response_time_minutes);
     const slowestRequests = sortedByTime.slice(0, 10);
     const fastestRequests = sortedByTime.slice(-10).reverse();
