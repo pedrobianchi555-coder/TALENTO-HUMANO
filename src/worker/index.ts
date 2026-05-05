@@ -4729,111 +4729,143 @@ app.get("/api/asset-incidents", authMiddleware, async (c) => {
 app.get("/api/chat/conversations", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
 
-    if (!userProfile) {
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
+
+    if (!userProfile || userErr) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const userId = userProfile!.id as number;
+    const userId = userProfile.id as number;
 
-    if ((userProfile as any).role === 'HR' && hasPermission(userProfile as any, PERMISSIONS.CHAT_VIEW_ALL_CONVERSATIONS)) {
+    if (userProfile.role === 'HR' && hasPermission(userProfile as any, PERMISSIONS.CHAT_VIEW_ALL_CONVERSATIONS)) {
       // HR sees all conversations
-      const conversations = await c.env.DB.prepare(`
-        SELECT DISTINCT c.id, c.created_at, c.updated_at,
-               u.id as other_user_id, u.first_name, u.last_name, u.department, u.position,
-               m.text as last_message_text, m.created_at as last_message_time, m.sender_id as last_message_sender
-        FROM conversations c
-        JOIN conversation_participants cp1 ON c.id = cp1.conversation_id
-        JOIN conversation_participants cp2 ON c.id = cp2.conversation_id AND cp2.user_id != cp1.user_id
-        JOIN users u ON cp2.user_id = u.id
-        LEFT JOIN messages m ON c.id = m.conversation_id
-        WHERE cp1.user_id = ?
-          AND m.id = (
-            SELECT MAX(id) FROM messages WHERE conversation_id = c.id
-          )
-        ORDER BY m.created_at DESC
-      `).bind(userId).all();
+      const { data: conversations, error: convErr } = await db
+        .from('conversation_participants')
+        .select(`
+          conversation_id,
+          conversations!inner(id, created_at, updated_at),
+          users!other(id, first_name, last_name, department, position)
+        `)
+        .eq('user_id', userId);
 
-      const conversationData = await Promise.all((conversations.results || []).map(async (conv: any) => {
-        const messages = await c.env.DB.prepare(
-          "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC"
-        ).bind(conv.id).all();
+      if (convErr) throw convErr;
+
+      // Get all conversation data with messages
+      const conversationData = await Promise.all((conversations || []).map(async (cp: any) => {
+        const convId = cp.conversation_id;
+
+        // Get all participants except current user
+        const { data: otherParticipants, error: partErr } = await db
+          .from('conversation_participants')
+          .select('user_id, users!inner(id, first_name, last_name, department, position)')
+          .eq('conversation_id', convId)
+          .neq('user_id', userId);
+
+        // Get all messages
+        const { data: messages, error: msgErr } = await db
+          .from('messages')
+          .select('*')
+          .eq('conversation_id', convId)
+          .order('created_at', { ascending: true });
+
+        if (msgErr) throw msgErr;
+
+        const lastMsg = messages && messages.length > 0 ? messages[messages.length - 1] : null;
+        const otherUser = otherParticipants && otherParticipants.length > 0 ? otherParticipants[0].users : null;
 
         return {
-          id: conv.id,
-          participants: [userId, conv.other_user_id],
-          messages: messages.results || [],
-          last_message: conv.last_message_text ? {
-            id: 0,
-            conversation_id: conv.id,
-            sender_id: conv.last_message_sender,
-            text: conv.last_message_text,
-            is_broadcast: false,
-            poll_id: null,
-            created_at: conv.last_message_time,
-            updated_at: conv.last_message_time,
-          } : null,
-          other_participant: {
-            id: conv.other_user_id,
-            first_name: conv.first_name,
-            last_name: conv.last_name,
-            department: conv.department,
-            position: conv.position,
-          },
-          created_at: conv.created_at,
-          updated_at: conv.updated_at,
+          id: convId,
+          participants: [userId, otherUser?.id],
+          messages: messages || [],
+          last_message: lastMsg || null,
+          other_participant: otherUser || null,
+          created_at: cp.conversations?.created_at,
+          updated_at: cp.conversations?.updated_at,
         };
       }));
 
       return c.json(conversationData);
     } else {
       // Employees only see their conversation with HR
-      // First find or create a conversation with HR
-      const hrUsers = await c.env.DB.prepare(
-        "SELECT id FROM users WHERE role = 'HR' ORDER BY id LIMIT 1"
-      ).all();
+      const { data: hrUsers, error: hrErr } = await db
+        .from('users')
+        .select('id')
+        .eq('role', 'HR')
+        .order('id')
+        .limit(1);
 
-      if (!hrUsers.results || hrUsers.results.length === 0) {
+      if (hrErr || !hrUsers || hrUsers.length === 0) {
         return c.json([]);
       }
 
-      const hrUserId = (hrUsers.results[0] as any).id;
+      const hrUserId = hrUsers[0].id;
 
-      // Find existing conversation
-      let conversation = await c.env.DB.prepare(`
-        SELECT c.id FROM conversations c
-        JOIN conversation_participants cp1 ON c.id = cp1.conversation_id AND cp1.user_id = ?
-        JOIN conversation_participants cp2 ON c.id = cp2.conversation_id AND cp2.user_id = ?
-      `).bind(userId, hrUserId).first();
+      // Find existing conversation between employee and HR
+      const { data: existingConv, error: findErr } = await db
+        .from('conversation_participants')
+        .select('conversation_id')
+        .eq('user_id', userId);
 
-      if (!conversation) {
-        // Create new conversation
-        const newConv = await c.env.DB.prepare(
-          "INSERT INTO conversations (created_at, updated_at) VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ).run();
+      let conversationId = null;
+      if (existingConv && existingConv.length > 0) {
+        // Check if any of these conversations include both users
+        for (const cp of existingConv) {
+          const { data: checkConv, error: checkErr } = await db
+            .from('conversation_participants')
+            .select('conversation_id')
+            .eq('conversation_id', cp.conversation_id)
+            .eq('user_id', hrUserId);
 
-        const conversationId = newConv.meta.last_row_id;
+          if (checkConv && checkConv.length > 0) {
+            conversationId = cp.conversation_id;
+            break;
+          }
+        }
+      }
 
-        await c.env.DB.prepare(
-          "INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?), (?, ?)"
-        ).bind(conversationId, userId, conversationId, hrUserId).run();
+      // If no conversation exists, create one
+      if (!conversationId) {
+        const { data: newConv, error: newErr } = await db
+          .from('conversations')
+          .insert({
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .select('id')
+          .single();
 
-        conversation = { id: conversationId };
+        if (newErr || !newConv) throw newErr;
+        conversationId = newConv.id;
+
+        // Add participants
+        const { error: partErr } = await db
+          .from('conversation_participants')
+          .insert([
+            { conversation_id: conversationId, user_id: userId },
+            { conversation_id: conversationId, user_id: hrUserId }
+          ]);
+
+        if (partErr) throw partErr;
       }
 
       // Get messages
-      const messages = await c.env.DB.prepare(
-        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC"
-      ).bind(conversation.id).all();
+      const { data: messages, error: msgErr } = await db
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true });
+
+      if (msgErr) throw msgErr;
 
       return c.json([{
-        id: conversation.id,
+        id: conversationId,
         participants: [userId, hrUserId],
-        messages: messages.results || [],
+        messages: messages || [],
         last_message: null,
         other_participant: null,
         created_at: new Date().toISOString(),
@@ -4854,87 +4886,132 @@ app.post("/api/chat/messages", authMiddleware, async (c) => {
       return c.json({ error: 'User not authenticated' }, 401);
     }
     const { conversation_id, text, is_auto_response, employee_id } = await c.req.json();
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, first_name, last_name FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
 
-    if (!userProfile) {
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, first_name, last_name')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
+
+    if (!userProfile || userErr) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const userId = (userProfile as any).id as number;
+    const userId = userProfile.id as number;
     let actualConversationId = conversation_id;
 
     // If no conversation_id but employee_id is provided, find or create conversation
     if (!conversation_id && employee_id) {
-      // Find existing conversation between HR user and employee
-      let conversation = await c.env.DB.prepare(`
-        SELECT c.id FROM conversations c
-        JOIN conversation_participants cp1 ON c.id = cp1.conversation_id AND cp1.user_id = ?
-        JOIN conversation_participants cp2 ON c.id = cp2.conversation_id AND cp2.user_id = ?
-      `).bind(userId, employee_id).first();
+      // Find existing conversation between users
+      const { data: existingConv, error: convErr } = await db
+        .from('conversations')
+        .select('id')
+        .eq('id', db.rpc('find_conversation', { user1: userId, user2: employee_id }));
 
-      if (!conversation) {
+      let conversation;
+      if (existingConv && existingConv.length > 0) {
+        conversation = existingConv[0];
+      } else {
         // Create new conversation
-        const newConv = await c.env.DB.prepare(
-          "INSERT INTO conversations (created_at, updated_at) VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ).run();
+        const { data: newConv, error: insertErr } = await db
+          .from('conversations')
+          .insert({
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .select()
+          .single();
 
-        actualConversationId = newConv.meta.last_row_id;
+        if (insertErr || !newConv) throw insertErr;
+        actualConversationId = newConv.id;
 
         // Add participants
-        await c.env.DB.prepare(
-          "INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?), (?, ?)"
-        ).bind(actualConversationId, userId, actualConversationId, employee_id).run();
-      } else {
+        const { error: partErr } = await db
+          .from('conversation_participants')
+          .insert([
+            { conversation_id: newConv.id, user_id: userId },
+            { conversation_id: newConv.id, user_id: employee_id }
+          ]);
+
+        if (partErr) throw partErr;
+      }
+
+      if (conversation) {
         actualConversationId = conversation.id;
       }
     }
 
     // For auto-responses, use the first HR user as sender
     let senderId = userId;
-    if (is_auto_response && (userProfile as any).role === 'EMPLOYEE') {
-      const hrUser = await c.env.DB.prepare(
-        "SELECT id FROM users WHERE role = 'HR' ORDER BY id LIMIT 1"
-      ).first();
-      if (hrUser) {
-        senderId = (hrUser as any).id;
+    if (is_auto_response && userProfile.role === 'EMPLOYEE') {
+      const { data: hrUsers, error: hrErr } = await db
+        .from('users')
+        .select('id')
+        .eq('role', 'HR')
+        .order('id')
+        .limit(1);
+
+      if (!hrErr && hrUsers && hrUsers.length > 0) {
+        senderId = hrUsers[0].id;
       }
     }
 
-    // Insert message (ensure no undefined values are passed to D1)
-    const result = await c.env.DB.prepare(`
-      INSERT INTO messages (conversation_id, sender_id, text, is_broadcast, poll_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).bind(actualConversationId, senderId, text, false, null).run();
+    // Insert message
+    const { data: msgData, error: msgErr } = await db
+      .from('messages')
+      .insert({
+        conversation_id: actualConversationId,
+        sender_id: senderId,
+        text,
+        is_broadcast: false,
+        poll_id: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .select('id')
+      .single();
+
+    if (msgErr) throw msgErr;
 
     // Update conversation timestamp
-    await c.env.DB.prepare(
-      "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).bind(actualConversationId).run();
+    const { error: updateErr } = await db
+      .from('conversations')
+      .update({ updated_at: new Date().toISOString() })
+      .eq('id', actualConversationId);
 
-    // Generate AI auto-response if it's an employee message and HR is available
-    if ((userProfile as any).role === 'EMPLOYEE' && c.env.OPENAI_API_KEY) {
+    if (updateErr) throw updateErr;
+
+    // Generate AI auto-response if it's an employee message and OpenAI is available
+    if (userProfile.role === 'EMPLOYEE' && c.env.OPENAI_API_KEY) {
       try {
         const openaiService = createOpenAIService(c.env.OPENAI_API_KEY, 'gpt-4o-mini');
-        
+
         const autoResponse = await openaiService.generateAutoResponse({
           messageText: text,
-          employeeName: `${(userProfile as any).first_name} ${(userProfile as any).last_name}`
+          employeeName: `${userProfile.first_name} ${userProfile.last_name}`
         });
 
         // Find HR user to send auto-response
-        const hrUser = await c.env.DB.prepare(
-          "SELECT id FROM users WHERE role = 'HR' ORDER BY id LIMIT 1"
-        ).first();
+        const { data: hrUsers, error: hrErr } = await db
+          .from('users')
+          .select('id')
+          .eq('role', 'HR')
+          .order('id')
+          .limit(1);
 
-        if (hrUser && autoResponse) {
-          // Insert auto-response message (ensure no undefined values)
-          await c.env.DB.prepare(`
-            INSERT INTO messages (conversation_id, sender_id, text, is_broadcast, poll_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-          `).bind(actualConversationId, (hrUser as any).id, `[Auto-response] ${autoResponse}`, false, null).run();
+        if (!hrErr && hrUsers && hrUsers.length > 0 && autoResponse) {
+          // Insert auto-response message
+          await db
+            .from('messages')
+            .insert({
+              conversation_id: actualConversationId,
+              sender_id: hrUsers[0].id,
+              text: `[Auto-response] ${autoResponse}`,
+              is_broadcast: false,
+              poll_id: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            });
         }
       } catch (aiError) {
         console.error('Error generating AI response:', aiError);
@@ -4942,7 +5019,7 @@ app.post("/api/chat/messages", authMiddleware, async (c) => {
       }
     }
 
-    return c.json({ success: true, message_id: result.meta.last_row_id, conversation_id: actualConversationId });
+    return c.json({ success: true, message_id: msgData?.id, conversation_id: actualConversationId });
   } catch (error) {
     console.error('Error sending message:', error);
     return c.json({ error: 'Failed to send message' }, 500);
@@ -4957,85 +5034,124 @@ app.post("/api/chat/broadcast", authMiddleware, requirePermission(PERMISSIONS.CH
       return c.json({ error: 'User not authenticated' }, 401);
     }
     const { target, message, poll } = await c.req.json();
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
 
-    if (!userProfile) {
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
+
+    if (!userProfile || userErr) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const userId = (userProfile as any).id as number;
+    const userId = userProfile.id as number;
 
     // Get target users
-    let targetUsers;
-    if (target === 'ALL') {
-      targetUsers = await c.env.DB.prepare(
-        "SELECT id FROM users WHERE role = 'EMPLOYEE' AND status = 'ACTIVE'"
-      ).all();
-    } else {
-      targetUsers = await c.env.DB.prepare(
-        "SELECT id FROM users WHERE role = 'EMPLOYEE' AND status = 'ACTIVE' AND department = ?"
-      ).bind(target).all();
+    let query = db
+      .from('users')
+      .select('id')
+      .eq('role', 'EMPLOYEE')
+      .eq('status', 'ACTIVE');
+
+    if (target !== 'ALL') {
+      query = query.eq('department', target);
     }
+
+    const { data: targetUsers, error: usersErr } = await query;
+
+    if (usersErr) throw usersErr;
 
     let pollId = null;
     if (poll) {
-      // Create poll
-      const pollResult = await c.env.DB.prepare(`
-        INSERT INTO polls (question, options, votes, voters)
-        VALUES (?, ?, '{}', '{}')
-      `).bind(poll.question, JSON.stringify(poll.options)).run();
-      pollId = pollResult.meta.last_row_id;
-
-      // Initialize votes for each option
+      // Create poll with initialized votes
       const votes: Record<string, number> = {};
       poll.options.forEach((_: string, index: number) => {
         votes[index.toString()] = 0;
       });
 
-      await c.env.DB.prepare(
-        "UPDATE polls SET votes = ? WHERE id = ?"
-      ).bind(JSON.stringify(votes), pollId).run();
+      const { data: pollData, error: pollErr } = await db
+        .from('polls')
+        .insert({
+          question: poll.question,
+          options: JSON.stringify(poll.options),
+          votes: JSON.stringify(votes),
+          voters: JSON.stringify({}),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select('id')
+        .single();
+
+      if (pollErr) throw pollErr;
+      pollId = pollData?.id;
     }
 
     // Send message to each target user
-    for (const targetUser of (targetUsers.results || [])) {
-      const targetUserId = (targetUser as any).id;
+    for (const targetUser of (targetUsers || [])) {
+      const targetUserId = targetUser.id;
 
-      // Find or create conversation
-      let conversation = await c.env.DB.prepare(`
-        SELECT c.id FROM conversations c
-        JOIN conversation_participants cp1 ON c.id = cp1.conversation_id AND cp1.user_id = ?
-        JOIN conversation_participants cp2 ON c.id = cp2.conversation_id AND cp2.user_id = ?
-      `).bind(userId, targetUserId).first();
+      // Find existing conversation
+      const { data: existingConv, error: convErr } = await db
+        .from('conversation_participants')
+        .select('conversation_id')
+        .eq('user_id', userId)
+        .eq('conversation_id',
+          db.from('conversation_participants')
+            .select('conversation_id')
+            .eq('user_id', targetUserId)
+        );
 
-      if (!conversation) {
+      let conversationId;
+      if (existingConv && existingConv.length > 0) {
+        conversationId = existingConv[0].conversation_id;
+      } else {
         // Create new conversation
-        const newConv = await c.env.DB.prepare(
-          "INSERT INTO conversations (created_at, updated_at) VALUES (CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ).run();
+        const { data: newConv, error: newErr } = await db
+          .from('conversations')
+          .insert({
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .select('id')
+          .single();
 
-        const conversationId = newConv.meta.last_row_id;
+        if (newErr || !newConv) throw newErr;
+        conversationId = newConv.id;
 
-        await c.env.DB.prepare(
-          "INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?), (?, ?)"
-        ).bind(conversationId, userId, conversationId, targetUserId).run();
+        // Add participants
+        const { error: partErr } = await db
+          .from('conversation_participants')
+          .insert([
+            { conversation_id: conversationId, user_id: userId },
+            { conversation_id: conversationId, user_id: targetUserId }
+          ]);
 
-        conversation = { id: conversationId };
+        if (partErr) throw partErr;
       }
 
-      // Send broadcast message (ensure pollId is null if not provided)
-      await c.env.DB.prepare(`
-        INSERT INTO messages (conversation_id, sender_id, text, is_broadcast, poll_id, created_at, updated_at)
-        VALUES (?, ?, ?, TRUE, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      `).bind(conversation.id, userId, message, pollId ?? null).run();
+      // Send broadcast message
+      const { error: msgErr } = await db
+        .from('messages')
+        .insert({
+          conversation_id: conversationId,
+          sender_id: userId,
+          text: message,
+          is_broadcast: true,
+          poll_id: pollId,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        });
+
+      if (msgErr) throw msgErr;
 
       // Update conversation timestamp
-      await c.env.DB.prepare(
-        "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-      ).bind(conversation.id).run();
+      const { error: updateErr } = await db
+        .from('conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', conversationId);
+
+      if (updateErr) throw updateErr;
     }
 
     return c.json({ success: true });
@@ -5048,11 +5164,17 @@ app.post("/api/chat/broadcast", authMiddleware, requirePermission(PERMISSIONS.CH
 // Get departments for broadcast targeting
 app.get("/api/chat/departments", authMiddleware, async (c) => {
   try {
-    const departments = await c.env.DB.prepare(
-      "SELECT DISTINCT department FROM users WHERE department IS NOT NULL AND department != '' ORDER BY department"
-    ).all();
+    const { data: users, error } = await db
+      .from('users')
+      .select('department')
+      .not('department', 'is', null)
+      .neq('department', '')
+      .order('department');
 
-    return c.json((departments.results || []).map((d: any) => d.department));
+    if (error) throw error;
+
+    const uniqueDepts = [...new Set((users || []).map(u => u.department))];
+    return c.json(uniqueDepts);
   } catch (error) {
     console.error('Error getting departments:', error);
     return c.json({ error: 'Failed to get departments' }, 500);
@@ -5062,13 +5184,18 @@ app.get("/api/chat/departments", authMiddleware, async (c) => {
 // Get polls
 app.get("/api/chat/polls", authMiddleware, async (c) => {
   try {
-    const polls = await c.env.DB.prepare("SELECT * FROM polls").all();
+    const { data: polls, error } = await db
+      .from('polls')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-    const pollsWithParsedData = (polls.results || []).map((poll: any) => ({
+    if (error) throw error;
+
+    const pollsWithParsedData = (polls || []).map((poll: any) => ({
       ...poll,
-      options: JSON.parse(poll.options || '[]'),
-      votes: JSON.parse(poll.votes || '{}'),
-      voters: JSON.parse(poll.voters || '{}'),
+      options: typeof poll.options === 'string' ? JSON.parse(poll.options || '[]') : poll.options || [],
+      votes: typeof poll.votes === 'string' ? JSON.parse(poll.votes || '{}') : poll.votes || {},
+      voters: typeof poll.voters === 'string' ? JSON.parse(poll.voters || '{}') : poll.voters || {},
     }));
 
     return c.json(pollsWithParsedData);
@@ -5084,25 +5211,32 @@ app.post("/api/chat/polls/:id/vote", authMiddleware, async (c) => {
     const mochaUser = c.get("user") as MochaUser;
     const pollId = parseInt(c.req.param('id'));
     const { option_index } = await c.req.json();
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
 
-    if (!userProfile) {
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser!.id)
+      .single();
+
+    if (!userProfile || userErr) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    const userId = (userProfile as any).id as number;
+    const userId = userProfile.id as number;
 
     // Get poll
-    const poll = await c.env.DB.prepare("SELECT * FROM polls WHERE id = ?").bind(pollId).first();
-    if (!poll) {
+    const { data: poll, error: pollErr } = await db
+      .from('polls')
+      .select('*')
+      .eq('id', pollId)
+      .single();
+
+    if (!poll || pollErr) {
       return c.json({ error: 'Poll not found' }, 404);
     }
 
-    const votes = JSON.parse((poll as any).votes || '{}');
-    const voters = JSON.parse((poll as any).voters || '{}');
+    const votes = typeof poll.votes === 'string' ? JSON.parse(poll.votes || '{}') : poll.votes || {};
+    const voters = typeof poll.voters === 'string' ? JSON.parse(poll.voters || '{}') : poll.voters || {};
 
     // Check if user already voted
     if (voters[userId.toString()]) {
@@ -5114,9 +5248,16 @@ app.post("/api/chat/polls/:id/vote", authMiddleware, async (c) => {
     voters[userId.toString()] = option_index;
 
     // Update poll
-    await c.env.DB.prepare(
-      "UPDATE polls SET votes = ?, voters = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).bind(JSON.stringify(votes), JSON.stringify(voters), pollId).run();
+    const { error: updateErr } = await db
+      .from('polls')
+      .update({
+        votes: JSON.stringify(votes),
+        voters: JSON.stringify(voters),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', pollId);
+
+    if (updateErr) throw updateErr;
 
     return c.json({ success: true });
   } catch (error) {
