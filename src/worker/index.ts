@@ -924,19 +924,21 @@ app.post("/api/loans", authMiddleware, async (c) => {
 app.get("/api/loans/:id/installments", authMiddleware, async (c) => {
   try {
     const loanId = parseInt(c.req.param('id'));
-    const status = c.req.query('status');
-    
-    let query = "SELECT * FROM loan_installments WHERE loan_id = ?";
-    const params = [loanId];
-    
-    if (status === 'pending') {
-      query += " AND status IN ('PENDING', 'PARTIALLY_PAID')";
-    }
-    
-    query += " ORDER BY installment_number";
+    const statusFilter = c.req.query('status');
 
-    const installments = await c.env.DB.prepare(query).bind(...params).all();
-    return c.json(installments.results || []);
+    let query = db
+      .from('loan_installments')
+      .select('*')
+      .eq('loan_id', loanId);
+
+    if (statusFilter === 'pending') {
+      query = query.in('status', ['PENDING', 'PARTIALLY_PAID']);
+    }
+
+    const { data: installments, error: err } = await query.order('installment_number', { ascending: true });
+
+    if (err) throw err;
+    return c.json(installments || []);
   } catch (error) {
     console.error('Error getting loan installments:', error);
     return c.json({ error: 'Failed to get loan installments' }, 500);
@@ -947,16 +949,19 @@ app.get("/api/loans/:id/installments", authMiddleware, async (c) => {
 app.get("/api/loans/:id/payments", authMiddleware, async (c) => {
   try {
     const loanId = parseInt(c.req.param('id'));
-    
-    const payments = await c.env.DB.prepare(`
-      SELECT p.*, u.first_name || ' ' || u.last_name as recorded_by_name
-      FROM loan_payments p
-      LEFT JOIN users u ON p.recorded_by_id = u.id
-      WHERE p.loan_id = ?
-      ORDER BY p.payment_date DESC, p.created_at DESC
-    `).bind(loanId).all();
-    
-    return c.json(payments.results || []);
+
+    const { data: payments, error: err } = await db
+      .from('loan_payments')
+      .select(`
+        *,
+        recorded_by:users(first_name, last_name)
+      `)
+      .eq('loan_id', loanId)
+      .order('payment_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (err) throw err;
+    return c.json(payments || []);
   } catch (error) {
     console.error('Error getting loan payments:', error);
     return c.json({ error: 'Failed to get loan payments' }, 500);
@@ -1632,24 +1637,33 @@ app.post("/api/events/:id/rsvp", authMiddleware, async (c) => {
     const mochaUser = c.get("user") as MochaUser;
     const eventId = parseInt(c.req.param('id'));
     const { status } = await c.req.json();
-    
+
     // Get user profile
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    // Insert or update RSVP
-    await c.env.DB.prepare(`
-      INSERT INTO event_rsvps (event_id, user_id, status, created_at, updated_at)
-      VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-      ON CONFLICT(event_id, user_id) DO UPDATE SET 
-        status = excluded.status,
-        updated_at = CURRENT_TIMESTAMP
-    `).bind(eventId, userProfile.id, status).run();
+    // Insert or update RSVP using upsert
+    const { error: upsertErr } = await db
+      .from('event_rsvp')
+      .upsert(
+        {
+          event_id: eventId,
+          user_id: userProfile.id,
+          status: status,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'event_id,user_id' }
+      );
+
+    if (upsertErr) throw upsertErr;
 
     return c.json({ success: true });
   } catch (error) {
@@ -1662,11 +1676,13 @@ app.post("/api/events/:id/rsvp", authMiddleware, async (c) => {
 app.get("/api/complaints", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role, hr_permissions FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role, hr_permissions')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -1675,29 +1691,36 @@ app.get("/api/complaints", authMiddleware, async (c) => {
     let complaints;
     if (userProfile.role === 'HR' && hasPermission(userProfile as any, PERMISSIONS.COMPLAINT_VIEW_ALL)) {
       // HR can see all complaints including anonymous ones
-      complaints = await c.env.DB.prepare(`
-        SELECT co.*, 
-               CASE 
-                 WHEN co.is_anonymous = 1 THEN 'Anónimo'
-                 ELSE u.first_name || ' ' || u.last_name
-               END as employee_name,
-               CASE 
-                 WHEN co.is_anonymous = 1 THEN NULL
-                 ELSE u.email
-               END as employee_email
-        FROM complaints co
-        LEFT JOIN users u ON co.user_id = u.id AND co.is_anonymous = 0
-        ORDER BY co.created_at DESC
-      `).all();
+      const { data: allComplaints, error: err } = await db
+        .from('complaints')
+        .select(`
+          *,
+          user:users(first_name, last_name, email)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (err) throw err;
+
+      // Transform to include employee_name and email
+      complaints = (allComplaints || []).map((complaint: any) => ({
+        ...complaint,
+        employee_name: complaint.is_anonymous ? 'Anónimo' : `${complaint.user?.first_name} ${complaint.user?.last_name}`,
+        employee_email: complaint.is_anonymous ? null : complaint.user?.email,
+      }));
     } else {
       // Regular employees can only see their own non-anonymous complaints
-      // Anonymous complaints are never shown to the employee who created them
-      complaints = await c.env.DB.prepare(
-        "SELECT * FROM complaints WHERE user_id = ? AND is_anonymous = 0 ORDER BY created_at DESC"
-      ).bind(userProfile.id).all();
+      const { data: userComplaints, error: err } = await db
+        .from('complaints')
+        .select('*')
+        .eq('user_id', userProfile.id)
+        .eq('is_anonymous', false)
+        .order('created_at', { ascending: false });
+
+      if (err) throw err;
+      complaints = userComplaints || [];
     }
 
-    return c.json(complaints.results || []);
+    return c.json(complaints);
   } catch (error) {
     console.error('Error getting complaints:', error);
     return c.json({ error: 'Failed to get complaints' }, 500);
@@ -1765,38 +1788,44 @@ app.post("/api/requests", authMiddleware, rateLimiter(RateLimits.MUTATION), asyn
     }
     
     // Get user profile
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       console.error('[CREATE REQUEST] User profile not found for mocha_user_id:', mochaUser.id);
       return c.json({ error: 'User profile not found' }, 404);
     }
 
-    console.log('[CREATE REQUEST] Creating request with:', { 
-      userId: userProfile.id, 
-      type: cleanType, 
-      category: validatedCategory, 
-      detailsLength: cleanDetails.length 
+    console.log('[CREATE REQUEST] Creating request with:', {
+      userId: userProfile.id,
+      type: cleanType,
+      category: validatedCategory,
+      detailsLength: cleanDetails.length
     });
 
     // Create request
-    const result = await c.env.DB.prepare(`
-      INSERT INTO requests (user_id, type, category, details, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'PENDING', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).bind(userProfile.id, cleanType, validatedCategory, cleanDetails).run();
+    const { data: newRequest, error: insertErr } = await db
+      .from('requests')
+      .insert({
+        user_id: userProfile.id,
+        type: cleanType,
+        category: validatedCategory,
+        details: cleanDetails,
+        status: 'PENDING',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
 
-    console.log('[CREATE REQUEST] Insert result:', result);
+    if (insertErr) throw insertErr;
 
-    // Get the created request
-    const request = await c.env.DB.prepare(
-      "SELECT * FROM requests WHERE id = ?"
-    ).bind(result.meta.last_row_id).first();
+    console.log('[CREATE REQUEST] Created request:', newRequest);
 
-    console.log('[CREATE REQUEST] Created request:', request);
-
-    return c.json(request);
+    return c.json(newRequest);
   } catch (error) {
     console.error('[CREATE REQUEST] Error creating request:', error);
     console.error('[CREATE REQUEST] Error stack:', error instanceof Error ? error.stack : 'No stack trace');
@@ -1812,9 +1841,11 @@ app.put("/api/requests/:id/status", authMiddleware, requirePermission(PERMISSION
     const { status, rejection_reason } = await c.req.json();
 
     // Get user profile to set resolved_by_id
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -1826,21 +1857,24 @@ app.put("/api/requests/:id/status", authMiddleware, requirePermission(PERMISSION
     }
 
     // Update request status and set resolved_by_id if status is APPROVED or REJECTED
-    if (status === 'APPROVED' || status === 'REJECTED') {
-      const cleanRejectionReason = status === 'REJECTED' 
-        ? validator.sanitizeString(rejection_reason, 1000) 
-        : null;
+    const updateData: any = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
 
-      await c.env.DB.prepare(`
-        UPDATE requests SET status = ?, resolved_by_id = ?, rejection_reason = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(status, userProfile.id, cleanRejectionReason, requestId).run();
-    } else {
-      await c.env.DB.prepare(`
-        UPDATE requests SET status = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).bind(status, requestId).run();
+    if (status === 'APPROVED' || status === 'REJECTED') {
+      updateData.resolved_by_id = userProfile.id;
+      if (status === 'REJECTED') {
+        updateData.details = validator.sanitizeString(rejection_reason, 1000);
+      }
     }
+
+    const { error: updateErr } = await db
+      .from('requests')
+      .update(updateData)
+      .eq('id', requestId);
+
+    if (updateErr) throw updateErr;
 
     return c.json({ success: true });
   } catch (error) {
@@ -3041,9 +3075,11 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
     }
     
     // Get user profile
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       console.log('[CREATE COMPLAINT] User profile not found for mocha_user_id:', mochaUser.id);
@@ -3057,13 +3093,13 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
     if (c.env.OPENAI_API_KEY) {
       try {
         const openaiService = createOpenAIService(c.env.OPENAI_API_KEY, 'gpt-4o-mini');
-        
+
         // Analyze sentiment to prioritize urgent complaints
         const sentiment = await openaiService.analyzeText(details, 'sentiment');
-        
+
         if (!category) {
           // Auto-suggest category based on content
-          const prompt = `Analyze this employee complaint and categorize it into one of these categories: 
+          const prompt = `Analyze this employee complaint and categorize it into one of these categories:
           - Acoso laboral
           - Condiciones de trabajo
           - Discriminación
@@ -3071,20 +3107,20 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
           - Ambiente laboral
           - Seguridad
           - Otro
-          
+
           Complaint: ${details}
-          
+
           Respond with only the category name.`;
-          
-          finalCategory = await openaiService.generateText({ 
-            prompt, 
-            temperature: 0.3, 
-            maxTokens: 50 
+
+          finalCategory = await openaiService.generateText({
+            prompt,
+            temperature: 0.3,
+            maxTokens: 50
           });
-          
+
           finalCategory = finalCategory.trim();
         }
-        
+
         console.log(`[CREATE COMPLAINT] AI analysis - sentiment: ${sentiment}, category: ${finalCategory}`);
       } catch (aiError) {
         console.error('[CREATE COMPLAINT] Error analyzing complaint with AI:', aiError);
@@ -3094,7 +3130,7 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
 
     // Determine if complaint should be anonymous
     const isAnonymous = is_anonymous === true;
-    
+
     // If anonymous, set user_id to NULL, otherwise use the actual user ID
     const complaintUserId = isAnonymous ? null : userProfile.id;
 
@@ -3107,28 +3143,27 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
 
     // Create complaint
     console.log('[CREATE COMPLAINT] Executing INSERT query...');
-    const result = await c.env.DB.prepare(`
-      INSERT INTO complaints (user_id, category, details, status, is_anonymous, created_at, updated_at)
-      VALUES (?, ?, ?, 'PENDIENTE', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-    `).bind(complaintUserId, finalCategory, cleanDetails, isAnonymous ? 1 : 0).run();
+    const { data: complaint, error: insertErr } = await db
+      .from('complaints')
+      .insert({
+        user_id: complaintUserId,
+        category: finalCategory,
+        details: cleanDetails,
+        status: 'PENDING',
+        is_anonymous: isAnonymous,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
 
-    console.log('[CREATE COMPLAINT] Insert result:', {
-      success: result.success,
-      lastRowId: result.meta?.last_row_id,
-      changes: result.meta?.changes
-    });
-
-    // Get the created complaint
-    console.log('[CREATE COMPLAINT] Fetching created complaint...');
-    const complaint = await c.env.DB.prepare(
-      "SELECT * FROM complaints WHERE id = ?"
-    ).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
     console.log('[CREATE COMPLAINT] Created complaint:', {
       id: complaint?.id,
-      user_id: (complaint as any)?.user_id,
-      is_anonymous: (complaint as any)?.is_anonymous,
-      category: (complaint as any)?.category
+      user_id: complaint?.user_id,
+      is_anonymous: complaint?.is_anonymous,
+      category: complaint?.category
     });
 
     console.log('[CREATE COMPLAINT] Success - returning complaint');
