@@ -569,11 +569,13 @@ app.get("/api/birthdays", authMiddleware, async (c) => {
 app.get("/api/employees", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       console.error('User profile not found for mocha_user_id:', mochaUser.id);
@@ -589,30 +591,31 @@ app.get("/api/employees", authMiddleware, async (c) => {
     }
 
     const includeInactive = c.req.query('include_inactive') === 'true';
-    
-    let query = `
-      SELECT id, first_name, last_name, email, ci, phone, department, 
-             position, payroll_type, base_salary, birth_date, sede, 
-             company_name, status, created_at, updated_at 
-      FROM users 
-      WHERE role = 'EMPLOYEE'
-    `;
-    
+
+    let query = db
+      .from('users')
+      .select(
+        'id, first_name, last_name, email, ci, phone, department, position, payroll_type, base_salary, birth_date, sede, company_name, status, created_at, updated_at'
+      )
+      .eq('role', 'EMPLOYEE')
+      .order('status', { ascending: false })
+      .order('first_name', { ascending: true })
+      .order('last_name', { ascending: true });
+
     if (!includeInactive) {
-      query += " AND status = 'ACTIVE'";
-    }
-    query += " ORDER BY status DESC, first_name, last_name";
-
-    console.log('Executing employee query:', query);
-    const employees = await c.env.DB.prepare(query).all();
-    console.log('Found employees:', employees.results?.length || 0);
-
-    // Log first employee for debugging
-    if (employees.results && employees.results.length > 0) {
-      console.log('First employee:', employees.results[0]);
+      query = query.eq('status', 'ACTIVE');
     }
 
-    return c.json(employees.results || []);
+    const { data: employees, error: err } = await query;
+
+    if (err) throw err;
+
+    console.log('Found employees:', employees?.length || 0);
+    if (employees && employees.length > 0) {
+      console.log('First employee:', employees[0]);
+    }
+
+    return c.json(employees || []);
   } catch (error) {
     console.error('Error getting employees:', error);
     return c.json({ error: 'Failed to get employees: ' + (error as Error).message }, 500);
@@ -1916,11 +1919,13 @@ app.get("/api/employees/managers", authMiddleware, async (c) => {
 app.put("/api/employees/:id", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -1935,23 +1940,26 @@ app.put("/api/employees/:id", authMiddleware, async (c) => {
     } = await c.req.json();
 
     // Update employee
-    await c.env.DB.prepare(`
-      UPDATE users SET 
-        first_name = ?, last_name = ?, email = ?, ci = ?, phone = ?, 
-        department = ?, position = ?, payroll_type = ?, base_salary = ?, 
-        birth_date = ?, sede = ?, company_name = ?, manager_id = ?, 
-        shirt_size = ?, pants_size = ?, boots_size = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(
-      first_name, last_name, email, ci, phone, department,
-      position, payroll_type, base_salary, birth_date, sede, company_name, manager_id,
-      shirt_size, pants_size, boots_size, employeeId
-    ).run();
+    const { error: updateErr } = await db
+      .from('users')
+      .update({
+        first_name, last_name, email, ci, phone, department,
+        position, payroll_type, base_salary, birth_date, sede, company_name, manager_id,
+        shirt_size, pants_size, boots_size,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', employeeId);
+
+    if (updateErr) throw updateErr;
 
     // Get the updated employee
-    const employee = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE id = ?"
-    ).bind(employeeId).first();
+    const { data: employee, error: getErr } = await db
+      .from('users')
+      .select('*')
+      .eq('id', employeeId)
+      .single();
+
+    if (getErr) throw getErr;
 
     return c.json(employee);
   } catch (error) {
@@ -2119,11 +2127,13 @@ app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPL
 app.post("/api/employees", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Get user profile to check role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -2138,20 +2148,31 @@ app.post("/api/employees", authMiddleware, async (c) => {
     const tempMochaId = `hr_created_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // Create new user/employee with temporary mocha_user_id
-    const result = await c.env.DB.prepare(`
-      INSERT INTO users (
-        mocha_user_id, email, first_name, last_name, ci, phone, department,
-        position, payroll_type, base_salary, birth_date, sede, company_name, role, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EMPLOYEE', 'ACTIVE')
-    `).bind(
-      tempMochaId, email, first_name, last_name, ci, phone, department,
-      position, payroll_type, base_salary, birth_date, sede, company_name || 'Cacao San Jose, C.A.'
-    ).run();
+    const { data: employee, error: insertErr } = await db
+      .from('users')
+      .insert({
+        mocha_user_id: tempMochaId,
+        email,
+        first_name,
+        last_name,
+        ci,
+        phone,
+        department,
+        position,
+        payroll_type,
+        base_salary,
+        birth_date,
+        sede,
+        company_name: company_name || 'Cacao San Jose, C.A.',
+        role: 'EMPLOYEE',
+        status: 'ACTIVE',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
 
-    // Get the created employee
-    const employee = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE id = ?"
-    ).bind(result.meta.last_row_id).first();
+    if (insertErr) throw insertErr;
 
     return c.json(employee);
   } catch (error) {
@@ -2166,23 +2187,24 @@ app.put("/api/employees/:id/inactivate", authMiddleware, async (c) => {
     const mochaUser = c.get("user");
     const employeeId = parseInt(c.req.param('id'));
     const { reason } = await c.req.json();
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, first_name, last_name, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, first_name, last_name, role')
+      .eq('mocha_user_id', mochaUser!.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
-    
-    if (!userProfile) {
-      return c.json({ error: 'User profile not found' }, 404);
-    }
 
     // Get employee data before inactivation
-    const employee = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE id = ? AND role = 'EMPLOYEE'"
-    ).bind(employeeId).first();
+    const { data: employee, error: getErr } = await db
+      .from('users')
+      .select('*')
+      .eq('id', employeeId)
+      .eq('role', 'EMPLOYEE')
+      .single();
 
     if (!employee) {
       return c.json({ error: 'Employee not found' }, 404);
@@ -2193,27 +2215,33 @@ app.put("/api/employees/:id/inactivate", authMiddleware, async (c) => {
     }
 
     // Update employee status
-    await c.env.DB.prepare(
-      "UPDATE users SET status = 'INACTIVE', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).bind(employeeId).run();
+    const { error: updateErr } = await db
+      .from('users')
+      .update({
+        status: 'INACTIVE',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', employeeId);
+
+    if (updateErr) throw updateErr;
 
     // Create audit log
-    await c.env.DB.prepare(`
-      INSERT INTO employee_audit_log (
-        employee_id, employee_ci, employee_name, employee_email,
-        action_type, reason, performed_by_id, performed_by_name,
-        employee_data_snapshot
-      ) VALUES (?, ?, ?, ?, 'INACTIVATED', ?, ?, ?, ?)
-    `).bind(
-      employeeId,
-      employee.ci,
-      `${employee.first_name} ${employee.last_name}`,
-      employee.email,
-      reason,
-      userProfile.id,
-      `${userProfile.first_name} ${userProfile.last_name}`,
-      JSON.stringify(employee)
-    ).run();
+    const { error: auditErr } = await db
+      .from('employee_audit_log')
+      .insert({
+        employee_id: employeeId,
+        employee_ci: employee.ci,
+        employee_name: `${employee.first_name} ${employee.last_name}`,
+        employee_email: employee.email,
+        action_type: 'INACTIVATED',
+        reason: reason,
+        performed_by_id: userProfile.id,
+        performed_by_name: `${userProfile.first_name} ${userProfile.last_name}`,
+        employee_data_snapshot: employee,
+        created_at: new Date().toISOString(),
+      });
+
+    if (auditErr) throw auditErr;
 
     return c.json({ success: true });
   } catch (error) {
@@ -2228,23 +2256,24 @@ app.put("/api/employees/:id/activate", authMiddleware, async (c) => {
     const mochaUser = c.get("user");
     const employeeId = parseInt(c.req.param('id'));
     const { reason } = await c.req.json();
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, first_name, last_name, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser!.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, first_name, last_name, role')
+      .eq('mocha_user_id', mochaUser!.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
     }
-    
-    if (!userProfile) {
-      return c.json({ error: 'User profile not found' }, 404);
-    }
 
     // Get employee data before activation
-    const employee = await c.env.DB.prepare(
-      "SELECT * FROM users WHERE id = ? AND role = 'EMPLOYEE'"
-    ).bind(employeeId).first();
+    const { data: employee, error: getErr } = await db
+      .from('users')
+      .select('*')
+      .eq('id', employeeId)
+      .eq('role', 'EMPLOYEE')
+      .single();
 
     if (!employee) {
       return c.json({ error: 'Employee not found' }, 404);
@@ -2255,27 +2284,33 @@ app.put("/api/employees/:id/activate", authMiddleware, async (c) => {
     }
 
     // Update employee status
-    await c.env.DB.prepare(
-      "UPDATE users SET status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
-    ).bind(employeeId).run();
+    const { error: updateErr } = await db
+      .from('users')
+      .update({
+        status: 'ACTIVE',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', employeeId);
+
+    if (updateErr) throw updateErr;
 
     // Create audit log
-    await c.env.DB.prepare(`
-      INSERT INTO employee_audit_log (
-        employee_id, employee_ci, employee_name, employee_email,
-        action_type, reason, performed_by_id, performed_by_name,
-        employee_data_snapshot
-      ) VALUES (?, ?, ?, ?, 'ACTIVATED', ?, ?, ?, ?)
-    `).bind(
-      employeeId,
-      employee.ci,
-      `${employee.first_name} ${employee.last_name}`,
-      employee.email,
-      reason,
-      userProfile.id,
-      `${userProfile.first_name} ${userProfile.last_name}`,
-      JSON.stringify(employee)
-    ).run();
+    const { error: auditErr } = await db
+      .from('employee_audit_log')
+      .insert({
+        employee_id: employeeId,
+        employee_ci: employee.ci,
+        employee_name: `${employee.first_name} ${employee.last_name}`,
+        employee_email: employee.email,
+        action_type: 'ACTIVATED',
+        reason: reason,
+        performed_by_id: userProfile.id,
+        performed_by_name: `${userProfile.first_name} ${userProfile.last_name}`,
+        employee_data_snapshot: employee,
+        created_at: new Date().toISOString(),
+      });
+
+    if (auditErr) throw auditErr;
 
     return c.json({ success: true });
   } catch (error) {
