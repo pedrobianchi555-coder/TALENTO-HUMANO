@@ -1959,10 +1959,15 @@ app.put("/api/complaints/:id/status", authMiddleware, requirePermission(PERMISSI
     const { status } = await c.req.json();
 
     // Update complaint status
-    await c.env.DB.prepare(`
-      UPDATE complaints SET status = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).bind(status, complaintId).run();
+    const { error } = await db
+      .from('complaints')
+      .update({
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', complaintId);
+
+    if (error) throw error;
 
     return c.json({ success: true });
   } catch (error) {
@@ -3173,11 +3178,13 @@ app.delete("/api/candidates/:id", authMiddleware, async (c) => {
 app.post("/api/ai/search-candidates", authMiddleware, async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
+
     // Check if user has HR role
-    const userProfile = await c.env.DB.prepare(
-      "SELECT role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -5576,11 +5583,13 @@ app.post('/api/upload', authMiddleware, rateLimiter(RateLimits.UPLOAD), async (c
     if (!mochaUser) {
       return c.json({ error: 'User not authenticated' }, 401);
     }
-    
+
     // Check if user has profile
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, role FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, role')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -6108,40 +6117,34 @@ app.get("/api/reports/requests/export-csv", authMiddleware, requirePermission(PE
     const startDate = c.req.query('start_date');
     const endDate = c.req.query('end_date');
 
-    let query = `
-      SELECT r.*, u.first_name, u.last_name, u.email, u.department
-      FROM requests r
-      JOIN users u ON r.user_id = u.id
-      WHERE 1=1
-    `;
-    const params: (string | number)[] = [];
+    let supaQuery = db
+      .from('requests')
+      .select(`
+        *,
+        user:users (first_name, last_name, email, department)
+      `);
 
     if (status) {
-      query += " AND r.status = ?";
-      params.push(status);
+      supaQuery = supaQuery.eq('status', status);
     }
     if (category) {
-      query += " AND r.category = ?";
-      params.push(category);
+      supaQuery = supaQuery.eq('category', category);
     }
     if (type) {
-      query += " AND r.type LIKE ?";
-      params.push(`%${type}%`);
+      supaQuery = supaQuery.ilike('type', `%${type}%`);
     }
     if (startDate) {
-      query += " AND r.created_at >= ?";
-      params.push(startDate);
+      supaQuery = supaQuery.gte('created_at', startDate);
     }
     if (endDate) {
-      query += " AND r.created_at <= ?";
-      params.push(endDate + ' 23:59:59');
+      supaQuery = supaQuery.lte('created_at', endDate + 'T23:59:59');
     }
 
-    query += " ORDER BY r.created_at DESC";
+    const { data: requests, error: reqErr } = await supaQuery.order('created_at', { ascending: false });
 
-    const requests = await c.env.DB.prepare(query).bind(...params).all();
+    if (reqErr) throw reqErr;
 
-    if (!requests.results || requests.results.length === 0) {
+    if (!requests || requests.length === 0) {
       return c.json({ error: 'No se encontraron solicitudes para exportar' }, 404);
     }
 
@@ -6157,17 +6160,17 @@ app.get("/api/reports/requests/export-csv", authMiddleware, requirePermission(PE
 
     // CSV Headers
     const headers = [
-      "ID", "Solicitante", "Email", "Departamento", "Tipo", "Categoría", 
+      "ID", "Solicitante", "Email", "Departamento", "Tipo", "Categoría",
       "Detalles", "Estado", "Fecha Creación", "Fecha Actualización"
     ].join(',');
 
     // CSV Rows
-    const csvRows = requests.results.map((request: any) => {
+    const csvRows = requests.map((request: any) => {
       const row = [
         request.id,
-        `${request.first_name} ${request.last_name}`,
-        request.email,
-        request.department || '',
+        `${request.user?.first_name} ${request.user?.last_name}`,
+        request.user?.email,
+        request.user?.department || '',
         request.type,
         request.category,
         request.details?.replace(/"/g, '""') || '', // Escape double quotes
@@ -6201,40 +6204,34 @@ app.get("/api/reports/requests/export-pdf", authMiddleware, requirePermission(PE
     const startDate = c.req.query('start_date');
     const endDate = c.req.query('end_date');
 
-    let query = `
-      SELECT r.*, u.first_name, u.last_name, u.email, u.department
-      FROM requests r
-      JOIN users u ON r.user_id = u.id
-      WHERE 1=1
-    `;
-    const params: (string | number)[] = [];
+    let supaQuery = db
+      .from('requests')
+      .select(`
+        *,
+        user:users (first_name, last_name, email, department)
+      `);
 
     if (status) {
-      query += " AND r.status = ?";
-      params.push(status);
+      supaQuery = supaQuery.eq('status', status);
     }
     if (category) {
-      query += " AND r.category = ?";
-      params.push(category);
+      supaQuery = supaQuery.eq('category', category);
     }
     if (type) {
-      query += " AND r.type LIKE ?";
-      params.push(`%${type}%`);
+      supaQuery = supaQuery.ilike('type', `%${type}%`);
     }
     if (startDate) {
-      query += " AND r.created_at >= ?";
-      params.push(startDate);
+      supaQuery = supaQuery.gte('created_at', startDate);
     }
     if (endDate) {
-      query += " AND r.created_at <= ?";
-      params.push(endDate + ' 23:59:59');
+      supaQuery = supaQuery.lte('created_at', endDate + 'T23:59:59');
     }
 
-    query += " ORDER BY r.created_at DESC";
+    const { data: requests, error: reqErr } = await supaQuery.order('created_at', { ascending: false });
 
-    const requests = await c.env.DB.prepare(query).bind(...params).all();
+    if (reqErr) throw reqErr;
 
-    if (!requests.results || requests.results.length === 0) {
+    if (!requests || requests.length === 0) {
       return c.json({ error: 'No se encontraron solicitudes para exportar' }, 404);
     }
 
@@ -6267,13 +6264,13 @@ app.get("/api/reports/requests/export-pdf", authMiddleware, requirePermission(PE
     let yPos = 25;
     doc.text(`Fecha de generación: ${new Date().toLocaleDateString('es-ES')}`, 14, yPos);
     yPos += 6;
-    doc.text(`Total de solicitudes: ${requests.results.length}`, 14, yPos);
+    doc.text(`Total de solicitudes: ${requests.length}`, 14, yPos);
     yPos += 10;
 
     // Table data
-    const tableData = requests.results.map((request: any) => [
+    const tableData = requests.map((request: any) => [
       request.id.toString(),
-      `${request.first_name} ${request.last_name}`,
+      `${request.user?.first_name} ${request.user?.last_name}`,
       request.type,
       request.category,
       (request.details || '').substring(0, 50) + (request.details && request.details.length > 50 ? '...' : ''),
@@ -6373,45 +6370,35 @@ app.get("/api/reports/loans/export-csv", authMiddleware, requirePermission(PERMI
     const startDate = c.req.query('start_date');
     const endDate = c.req.query('end_date');
 
-    let query = `
-      SELECT l.*, 
-             u.first_name || ' ' || u.last_name as employee_name,
-             u.email as employee_email,
-             u.ci as employee_ci,
-             (SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id) as total_paid,
-             (l.principal_amount - COALESCE((SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id), 0)) as pending_amount
-      FROM loans l
-      JOIN users u ON l.user_id = u.id
-      WHERE 1=1
-    `;
-    const params: (string | number)[] = [];
+    let supaQuery = db
+      .from('loans')
+      .select(`
+        *,
+        user:users (first_name, last_name, email, ci),
+        payments:loan_payments (amount_paid)
+      `);
 
     if (status) {
-      query += " AND l.status = ?";
-      params.push(status);
+      supaQuery = supaQuery.eq('status', status);
     }
     if (category) {
-      query += " AND l.category = ?";
-      params.push(category);
+      supaQuery = supaQuery.eq('category', category);
     }
     if (employeeId) {
-      query += " AND l.user_id = ?";
-      params.push(parseInt(employeeId));
+      supaQuery = supaQuery.eq('user_id', parseInt(employeeId));
     }
     if (startDate) {
-      query += " AND l.issue_date >= ?";
-      params.push(startDate);
+      supaQuery = supaQuery.gte('issue_date', startDate);
     }
     if (endDate) {
-      query += " AND l.issue_date <= ?";
-      params.push(endDate);
+      supaQuery = supaQuery.lte('issue_date', endDate);
     }
 
-    query += " ORDER BY l.created_at DESC";
+    const { data: loans, error: loansErr } = await supaQuery.order('created_at', { ascending: false });
 
-    const loans = await c.env.DB.prepare(query).bind(...params).all();
+    if (loansErr) throw loansErr;
 
-    if (!loans.results || loans.results.length === 0) {
+    if (!loans || loans.length === 0) {
       return c.json({ error: 'No se encontraron préstamos para exportar' }, 404);
     }
 
@@ -6427,22 +6414,24 @@ app.get("/api/reports/loans/export-csv", authMiddleware, requirePermission(PERMI
 
     // CSV Headers
     const headers = [
-      "ID", "Empleado", "CI", "Email", "Categoría", "Monto Original", 
-      "Saldo Pendiente", "Total Pagado", "Cuota Mensual", "Cuotas Totales", 
+      "ID", "Empleado", "CI", "Email", "Categoría", "Monto Original",
+      "Saldo Pendiente", "Total Pagado", "Cuota Mensual", "Cuotas Totales",
       "Cuotas Restantes", "Estado", "Fecha Emisión"
     ].join(',');
 
     // CSV Rows
-    const csvRows = loans.results.map((loan: any) => {
+    const csvRows = loans.map((loan: any) => {
+      const totalPaid = (loan.payments || []).reduce((sum, p) => sum + (p.amount_paid || 0), 0);
+      const pendingAmount = loan.principal_amount - totalPaid;
       const row = [
         loan.id,
-        loan.employee_name || '',
-        loan.employee_ci || '',
-        loan.employee_email || '',
+        `${loan.user?.first_name || ''} ${loan.user?.last_name || ''}`.trim(),
+        loan.user?.ci || '',
+        loan.user?.email || '',
         loan.category,
         loan.principal_amount,
-        loan.pending_amount || 0,
-        loan.total_paid || 0,
+        pendingAmount,
+        totalPaid,
         loan.monthly_installment,
         loan.total_installments,
         loan.remaining_installments,
@@ -6475,43 +6464,35 @@ app.get("/api/reports/loans/export-pdf", authMiddleware, requirePermission(PERMI
     const startDate = c.req.query('start_date');
     const endDate = c.req.query('end_date');
 
-    let query = `
-      SELECT l.*, 
-             u.first_name || ' ' || u.last_name as employee_name,
-             (SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id) as total_paid,
-             (l.principal_amount - COALESCE((SELECT SUM(amount_paid) FROM loan_payments WHERE loan_id = l.id), 0)) as pending_amount
-      FROM loans l
-      JOIN users u ON l.user_id = u.id
-      WHERE 1=1
-    `;
-    const params: (string | number)[] = [];
+    let supaQuery = db
+      .from('loans')
+      .select(`
+        *,
+        user:users (first_name, last_name),
+        payments:loan_payments (amount_paid)
+      `);
 
     if (status) {
-      query += " AND l.status = ?";
-      params.push(status);
+      supaQuery = supaQuery.eq('status', status);
     }
     if (category) {
-      query += " AND l.category = ?";
-      params.push(category);
+      supaQuery = supaQuery.eq('category', category);
     }
     if (employeeId) {
-      query += " AND l.user_id = ?";
-      params.push(parseInt(employeeId));
+      supaQuery = supaQuery.eq('user_id', parseInt(employeeId));
     }
     if (startDate) {
-      query += " AND l.issue_date >= ?";
-      params.push(startDate);
+      supaQuery = supaQuery.gte('issue_date', startDate);
     }
     if (endDate) {
-      query += " AND l.issue_date <= ?";
-      params.push(endDate);
+      supaQuery = supaQuery.lte('issue_date', endDate);
     }
 
-    query += " ORDER BY l.created_at DESC";
+    const { data: loans, error: loansErr } = await supaQuery.order('created_at', { ascending: false });
 
-    const loans = await c.env.DB.prepare(query).bind(...params).all();
+    if (loansErr) throw loansErr;
 
-    if (!loans.results || loans.results.length === 0) {
+    if (!loans || loans.length === 0) {
       return c.json({ error: 'No se encontraron préstamos para exportar' }, 404);
     }
 
@@ -6552,21 +6533,25 @@ app.get("/api/reports/loans/export-pdf", authMiddleware, requirePermission(PERMI
     let yPos = 25;
     doc.text(`Fecha de generación: ${new Date().toLocaleDateString('es-ES')}`, 14, yPos);
     yPos += 6;
-    doc.text(`Total de préstamos: ${loans.results.length}`, 14, yPos);
+    doc.text(`Total de préstamos: ${loans.length}`, 14, yPos);
     yPos += 10;
 
     // Table data
-    const tableData = loans.results.map((loan: any) => [
-      loan.id.toString(),
-      loan.employee_name || '',
-      loan.category,
-      formatCurrency(loan.principal_amount),
-      formatCurrency(loan.pending_amount || 0),
-      formatCurrency(loan.monthly_installment),
-      `${loan.remaining_installments}/${loan.total_installments}`,
-      getStatusText(loan.status),
-      new Date(loan.issue_date).toLocaleDateString('es-ES')
-    ]);
+    const tableData = loans.map((loan: any) => {
+      const totalPaid = (loan.payments || []).reduce((sum, p) => sum + (p.amount_paid || 0), 0);
+      const pendingAmount = loan.principal_amount - totalPaid;
+      return [
+        loan.id.toString(),
+        `${loan.user?.first_name || ''} ${loan.user?.last_name || ''}`.trim(),
+        loan.category,
+        formatCurrency(loan.principal_amount),
+        formatCurrency(pendingAmount),
+        formatCurrency(loan.monthly_installment),
+        `${loan.remaining_installments}/${loan.total_installments}`,
+        getStatusText(loan.status),
+        new Date(loan.issue_date).toLocaleDateString('es-ES')
+      ];
+    });
 
     // Generate table using autoTable plugin
     (doc as any).autoTable({
@@ -6768,74 +6753,41 @@ app.get("/api/audit-log", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE
     const startDate = c.req.query('startDate');
     const endDate = c.req.query('endDate');
 
-    let query = "SELECT * FROM audit_log WHERE 1=1";
-    const params: any[] = [];
+    let supaQuery = db
+      .from('audit_log')
+      .select('*', { count: 'exact' });
 
     if (module) {
-      query += " AND module = ?";
-      params.push(module);
+      supaQuery = supaQuery.eq('module', module);
     }
 
     if (actionType) {
-      query += " AND action_type = ?";
-      params.push(actionType);
+      supaQuery = supaQuery.eq('action_type', actionType);
     }
 
     if (userEmail) {
-      query += " AND user_email LIKE ?";
-      params.push(`%${userEmail}%`);
+      supaQuery = supaQuery.ilike('user_email', `%${userEmail}%`);
     }
 
     if (startDate) {
-      query += " AND created_at >= ?";
-      params.push(startDate);
+      supaQuery = supaQuery.gte('created_at', startDate);
     }
 
     if (endDate) {
-      query += " AND created_at <= ?";
-      params.push(endDate + ' 23:59:59');
+      supaQuery = supaQuery.lte('created_at', endDate + 'T23:59:59');
     }
 
-    query += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
-    params.push(limit, offset);
+    const { data: logs, count, error: logsErr } = await supaQuery
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
-    const logs = await c.env.DB.prepare(query).bind(...params).all();
+    if (logsErr) throw logsErr;
 
-    // Get total count for pagination
-    let countQuery = "SELECT COUNT(*) as total FROM audit_log WHERE 1=1";
-    const countParams: any[] = [];
-
-    if (module) {
-      countQuery += " AND module = ?";
-      countParams.push(module);
-    }
-
-    if (actionType) {
-      countQuery += " AND action_type = ?";
-      countParams.push(actionType);
-    }
-
-    if (userEmail) {
-      countQuery += " AND user_email LIKE ?";
-      countParams.push(`%${userEmail}%`);
-    }
-
-    if (startDate) {
-      countQuery += " AND created_at >= ?";
-      countParams.push(startDate);
-    }
-
-    if (endDate) {
-      countQuery += " AND created_at <= ?";
-      countParams.push(endDate + ' 23:59:59');
-    }
-
-    const countResult = await c.env.DB.prepare(countQuery).bind(...countParams).first();
-    const total = (countResult as any)?.total || 0;
+    const total = count || 0;
     const totalPages = Math.ceil(total / limit);
 
     return c.json({
-      logs: logs.results || [],
+      logs: logs || [],
       page,
       totalPages,
       total
@@ -6850,10 +6802,12 @@ app.get("/api/audit-log", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE
 app.get("/api/audit-log/export", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE_AUDIT_LOG), async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, email FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, email')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -6861,10 +6815,10 @@ app.get("/api/audit-log/export", authMiddleware, requirePermission(PERMISSIONS.E
 
     // Log export action
     await auditLog(
-      c.env.DB,
+      db,
       c,
-      (userProfile as any).id,
-      (userProfile as any).email,
+      userProfile.id,
+      userProfile.email,
       AuditAction.EXPORT,
       AuditModule.SESSION,
       'audit_log',
@@ -6878,41 +6832,37 @@ app.get("/api/audit-log/export", authMiddleware, requirePermission(PERMISSIONS.E
     const startDate = c.req.query('startDate');
     const endDate = c.req.query('endDate');
 
-    let query = "SELECT * FROM audit_log WHERE 1=1";
-    const params: any[] = [];
+    let supaQuery = db
+      .from('audit_log')
+      .select('*');
 
     if (module) {
-      query += " AND module = ?";
-      params.push(module);
+      supaQuery = supaQuery.eq('module', module);
     }
 
     if (actionType) {
-      query += " AND action_type = ?";
-      params.push(actionType);
+      supaQuery = supaQuery.eq('action_type', actionType);
     }
 
     if (userEmail) {
-      query += " AND user_email LIKE ?";
-      params.push(`%${userEmail}%`);
+      supaQuery = supaQuery.ilike('user_email', `%${userEmail}%`);
     }
 
     if (startDate) {
-      query += " AND created_at >= ?";
-      params.push(startDate);
+      supaQuery = supaQuery.gte('created_at', startDate);
     }
 
     if (endDate) {
-      query += " AND created_at <= ?";
-      params.push(endDate + ' 23:59:59');
+      supaQuery = supaQuery.lte('created_at', endDate + 'T23:59:59');
     }
 
-    query += " ORDER BY created_at DESC LIMIT 10000";
-
-    const logs = await c.env.DB.prepare(query).bind(...params).all();
+    const { data: logs, error: logsErr } = await supaQuery
+      .order('created_at', { ascending: false })
+      .limit(10000);
 
     // Generate CSV
     const headers = ['Fecha/Hora', 'Usuario', 'Módulo', 'Acción', 'Tipo Recurso', 'ID Recurso', 'IP', 'Detalles'];
-    const rows = (logs.results || []).map((log: any) => [
+    const rows = (logs || []).map((log: any) => [
       log.created_at,
       log.user_email,
       log.module,
@@ -6943,11 +6893,15 @@ app.get("/api/audit-log/export", authMiddleware, requirePermission(PERMISSIONS.E
 // Get backup history (HR only)
 app.get("/api/backups/history", authMiddleware, requirePermission(PERMISSIONS.HR_ADMIN), async (c) => {
   try {
-    const backups = await c.env.DB.prepare(
-      "SELECT * FROM backup_history ORDER BY created_at DESC LIMIT 100"
-    ).all();
+    const { data: backups, error } = await db
+      .from('backup_history')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
 
-    return c.json(backups.results || []);
+    if (error) throw error;
+
+    return c.json(backups || []);
   } catch (error) {
     console.error('Error getting backup history:', error);
     return c.json({ error: 'Failed to get backup history' }, 500);
@@ -6958,10 +6912,12 @@ app.get("/api/backups/history", authMiddleware, requirePermission(PERMISSIONS.HR
 app.post("/api/backups/create", authMiddleware, requirePermission(PERMISSIONS.HR_ADMIN), rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
     const mochaUser = c.get("user") as MochaUser;
-    
-    const userProfile = await c.env.DB.prepare(
-      "SELECT id, first_name, last_name, email FROM users WHERE mocha_user_id = ?"
-    ).bind(mochaUser.id).first();
+
+    const { data: userProfile, error: userErr } = await db
+      .from('users')
+      .select('id, first_name, last_name, email')
+      .eq('mocha_user_id', mochaUser.id)
+      .single();
 
     if (!userProfile) {
       return c.json({ error: 'User profile not found' }, 404);
@@ -6970,7 +6926,7 @@ app.post("/api/backups/create", authMiddleware, requirePermission(PERMISSIONS.HR
     const { includeAuditLogs = false, format = 'json' } = await c.req.json();
 
     // Create backup
-    const { data, metadata } = await createDatabaseBackup(c.env.DB, {
+    const { data, metadata } = await createDatabaseBackup(db, {
       includeAuditLogs,
       format
     });
@@ -6988,27 +6944,28 @@ app.post("/api/backups/create", authMiddleware, requirePermission(PERMISSIONS.HR
     const fileUrl = `/api/files/backups/${fileName}`;
 
     // Record in backup history
-    await c.env.DB.prepare(`
-      INSERT INTO backup_history (
-        backup_type, file_url, file_size, tables_included, row_count,
-        status, created_by_id, created_by_name
-      ) VALUES (?, ?, ?, ?, ?, 'COMPLETED', ?, ?)
-    `).bind(
-      format.toUpperCase(),
-      fileUrl,
-      fileSize,
-      JSON.stringify(metadata.tables),
-      metadata.totalRows,
-      (userProfile as any).id,
-      `${(userProfile as any).first_name} ${(userProfile as any).last_name}`
-    ).run();
+    const { error: insertErr } = await db
+      .from('backup_history')
+      .insert({
+        backup_type: format.toUpperCase(),
+        file_url: fileUrl,
+        file_size: fileSize,
+        tables_included: metadata.tables,
+        row_count: metadata.totalRows,
+        status: 'COMPLETED',
+        created_by_id: userProfile.id,
+        created_by_name: `${userProfile.first_name} ${userProfile.last_name}`,
+        created_at: new Date().toISOString()
+      });
+
+    if (insertErr) throw insertErr;
 
     // Log audit
     await auditLog(
-      c.env.DB,
+      db,
       c,
-      (userProfile as any).id,
-      (userProfile as any).email,
+      userProfile.id,
+      userProfile.email,
       AuditAction.CREATE,
       AuditModule.BACKUP,
       'database_backup',
@@ -7033,10 +6990,12 @@ app.post("/api/backups/create", authMiddleware, requirePermission(PERMISSIONS.HR
 app.get("/api/backups/:id/download", authMiddleware, requirePermission(PERMISSIONS.HR_ADMIN), async (c) => {
   try {
     const backupId = parseInt(c.req.param('id'));
-    
-    const backup = await c.env.DB.prepare(
-      "SELECT * FROM backup_history WHERE id = ?"
-    ).bind(backupId).first();
+
+    const { data: backup, error: backupErr } = await db
+      .from('backup_history')
+      .select('*')
+      .eq('id', backupId)
+      .single();
 
     if (!backup || !backup.file_url) {
       return c.json({ error: 'Backup not found' }, 404);
@@ -7276,19 +7235,26 @@ app.get('/api/logout', async (c) => {
     // Try to log logout action
     if (typeof sessionToken === 'string') {
       try {
-        const userProfile = await c.env.DB.prepare(
-          "SELECT u.id, u.email FROM users u JOIN (SELECT mocha_user_id FROM users WHERE mocha_user_id IS NOT NULL LIMIT 1) tmp"
-        ).first();
-        
-        if (userProfile) {
-          await auditLog(
-            c.env.DB,
-            c,
-            (userProfile as any).id,
-            (userProfile as any).email,
-            AuditAction.LOGOUT,
-            AuditModule.SESSION
-          );
+        // Get the user from the session via the Mocha Users Service
+        const user = c.get('user') as MochaUser | undefined;
+
+        if (user) {
+          const { data: userProfile, error: userErr } = await db
+            .from('users')
+            .select('id, email')
+            .eq('mocha_user_id', user.id)
+            .single();
+
+          if (userProfile) {
+            await auditLog(
+              db,
+              c,
+              userProfile.id,
+              userProfile.email,
+              AuditAction.LOGOUT,
+              AuditModule.SESSION
+            );
+          }
         }
       } catch (err) {
         console.error('Error logging logout audit:', err);
