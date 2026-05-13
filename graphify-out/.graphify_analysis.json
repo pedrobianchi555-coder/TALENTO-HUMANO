@@ -1,0 +1,730 @@
+{
+  "communities": {
+    "0": [
+      "src_worker_index_ts",
+      "src_worker_security_headers_ts",
+      "worker_index_actiontype",
+      "worker_index_allevents",
+      "worker_index_allowedextensions",
+      "worker_index_assetid",
+      "worker_index_backupid",
+      "worker_index_bycategory",
+      "worker_index_byresolver",
+      "worker_index_bytype",
+      "worker_index_category",
+      "worker_index_categoryid",
+      "worker_index_checkintime",
+      "worker_index_checkouttime",
+      "worker_index_cimatch",
+      "worker_index_cleanbasesalary",
+      "worker_index_cleanbirthdate",
+      "worker_index_cleanbootssize",
+      "worker_index_cleanci",
+      "worker_index_cleancomments",
+      "worker_index_cleancompanyname",
+      "worker_index_cleancsv",
+      "worker_index_cleandata",
+      "worker_index_cleandepartment",
+      "worker_index_cleandetails",
+      "worker_index_cleanedresponse",
+      "worker_index_cleanfirstname",
+      "worker_index_cleanfullname",
+      "worker_index_cleanlastname",
+      "worker_index_cleanmanagerid",
+      "worker_index_cleanpantssize",
+      "worker_index_cleanpayrolltype",
+      "worker_index_cleanphone",
+      "worker_index_cleanposition",
+      "worker_index_cleanrelationship",
+      "worker_index_cleanresumetext",
+      "worker_index_cleanscore",
+      "worker_index_cleansede",
+      "worker_index_cleanshirtsize",
+      "worker_index_cleantype",
+      "worker_index_companyname",
+      "worker_index_conditionstatus",
+      "worker_index_csv",
+      "worker_index_csvrows",
+      "worker_index_cycleid",
+      "worker_index_datalines",
+      "worker_index_datea",
+      "worker_index_dateb",
+      "worker_index_daysback",
+      "worker_index_department",
+      "worker_index_dependentid",
+      "worker_index_doc",
+      "worker_index_duedate",
+      "worker_index_employeenames",
+      "worker_index_employeeswithoutmanager",
+      "worker_index_enddate",
+      "worker_index_errors",
+      "worker_index_evaluationstocreate",
+      "worker_index_eventid",
+      "worker_index_fastestrequests",
+      "worker_index_fields",
+      "worker_index_file",
+      "worker_index_fileextension",
+      "worker_index_filename",
+      "worker_index_filepath",
+      "worker_index_files",
+      "worker_index_finalcategory",
+      "worker_index_firstname",
+      "worker_index_formattedassets",
+      "worker_index_formattedassignments",
+      "worker_index_formattedhistory",
+      "worker_index_formattedincidents",
+      "worker_index_formattedloans",
+      "worker_index_formattedmaintenance",
+      "worker_index_formattedpayslips",
+      "worker_index_formattedrequests",
+      "worker_index_headers",
+      "worker_index_incidentid",
+      "worker_index_installmentsbatch",
+      "worker_index_interviewid",
+      "worker_index_lastname",
+      "worker_index_limit",
+      "worker_index_lines",
+      "worker_index_loanid",
+      "worker_index_module",
+      "worker_index_month",
+      "worker_index_operationalstatus",
+      "worker_index_page",
+      "worker_index_params",
+      "worker_index_payrolltype",
+      "worker_index_pdfbuffer",
+      "worker_index_pollid",
+      "worker_index_pollswithparseddata",
+      "worker_index_position",
+      "worker_index_queryuserid",
+      "worker_index_randomstring",
+      "worker_index_rawmonth",
+      "worker_index_rawyear",
+      "worker_index_requestcategory",
+      "worker_index_requestdata",
+      "worker_index_requestid",
+      "worker_index_requesttype",
+      "worker_index_resolvedbyid",
+      "worker_index_response",
+      "worker_index_rows",
+      "worker_index_searchresults",
+      "worker_index_sede",
+      "worker_index_slowestrequests",
+      "worker_index_sortedbytime",
+      "worker_index_startdate",
+      "worker_index_stats",
+      "worker_index_status",
+      "worker_index_statusfilter",
+      "worker_index_supaquery",
+      "worker_index_tabledata",
+      "worker_index_timestamp",
+      "worker_index_totalpages",
+      "worker_index_totalpaid",
+      "worker_index_transformed",
+      "worker_index_transformedevents",
+      "worker_index_type",
+      "worker_index_unique",
+      "worker_index_user",
+      "worker_index_useremail",
+      "worker_index_userid",
+      "worker_index_validatedcategory",
+      "worker_index_votes",
+      "worker_index_year",
+      "worker_index_yearmonth"
+    ],
+    "1": [
+      "api_candidates",
+      "api_payslips",
+      "components_applayout_applayout",
+      "components_applayout_applayoutprops",
+      "components_employeeeditmodal_manageroption",
+      "components_sidebar_menuitem",
+      "components_sidebar_sidebar",
+      "components_sidebar_sidebarprops",
+      "contexts_authcontext_authcontext",
+      "contexts_authcontext_authcontextvalue",
+      "contexts_authcontext_authprovider",
+      "contexts_authcontext_useauth",
+      "hooks_useconfirmationmodal_modalconfig",
+      "hooks_usepermissions_usepermissions",
+      "hooks_usepermissions_usepermissionsreturn",
+      "pages_birthdays_birthdays",
+      "pages_complaints_complaintwithuser",
+      "pages_dashboard_dashboard",
+      "pages_dashboard_dashboardstats",
+      "pages_documents_documentwithuploader",
+      "pages_employees_employees",
+      "pages_home_home",
+      "pages_permissionsadmin_employee",
+      "pages_permissionsadmin_hruser",
+      "pages_permissionsadmin_permissionsadmin",
+      "pages_permissionsadmin_permissionsconfig",
+      "pages_profilesetup_profilesetup",
+      "pages_requests_requestwithuser",
+      "pages_whatsappsettings_whatsappsettings",
+      "shared_types_complaint",
+      "shared_types_document",
+      "shared_types_request",
+      "src_react_app_components_employeeeditmodal_tsx",
+      "src_react_app_components_newconversationmodal_tsx",
+      "src_react_app_components_sidebar_tsx",
+      "src_react_app_contexts_authcontext_tsx",
+      "src_react_app_hooks_useconfirmationmodal_ts",
+      "src_react_app_hooks_usesessiontimeout_ts",
+      "src_react_app_pages_dashboard_tsx",
+      "src_react_app_pages_employees_tsx",
+      "src_react_app_pages_home_tsx",
+      "src_react_app_pages_profile_tsx",
+      "worker_index_profile"
+    ],
+    "2": [
+      "components_assethistorymodal_assethistoryevent",
+      "pages_chat_poll",
+      "pages_evaluations_evaluationwithdetails",
+      "shared_types_asset",
+      "shared_types_assetassignment",
+      "shared_types_assetcategory",
+      "shared_types_assetincident",
+      "shared_types_assetmaintenance",
+      "shared_types_candidate",
+      "shared_types_candidatestatus",
+      "shared_types_candidatewithinterviews",
+      "shared_types_company",
+      "shared_types_conversation",
+      "shared_types_conversationparticipant",
+      "shared_types_conversationwithmessages",
+      "shared_types_corporateevent",
+      "shared_types_employeeauditlog",
+      "shared_types_enhanceduser",
+      "shared_types_evaluation",
+      "shared_types_evaluationcycle",
+      "shared_types_eventrsvp",
+      "shared_types_familydependent",
+      "shared_types_interview",
+      "shared_types_interviewstatus",
+      "shared_types_interviewtype",
+      "shared_types_loan",
+      "shared_types_loaninstallment",
+      "shared_types_loanpayment",
+      "shared_types_loanpaymentmethod",
+      "shared_types_loanrepaymentplan",
+      "shared_types_message",
+      "shared_types_paymentfrequency",
+      "shared_types_repaymentmethod",
+      "shared_types_userprofile",
+      "src_react_app_components_assethistorymodal_tsx",
+      "src_react_app_pages_chat_tsx",
+      "src_react_app_pages_evaluations_tsx",
+      "src_shared_types_ts"
+    ],
+    "3": [
+      "components_asseteditmodal_asseteditmodal",
+      "components_birthdaycard_birthdaycard",
+      "components_birthdaycard_birthdaycardprops",
+      "components_loandetailmodal_loandetailmodal",
+      "components_registerpaymentmodal_registerpaymentmodalprops",
+      "components_userprofilecard_userprofilecard",
+      "components_userprofilecard_userprofilecardprops",
+      "pages_assets_assets",
+      "pages_assets_assetwithdetails",
+      "pages_backupmanagement_backupmanagement",
+      "pages_backupmanagement_backuprecord",
+      "pages_events_events",
+      "pages_events_eventwithrsvp",
+      "pages_loans_extendedloan",
+      "pages_loans_loans",
+      "shared_date_utils_formatbirthday",
+      "shared_date_utils_formatdate",
+      "shared_date_utils_formatdatelong",
+      "shared_date_utils_formatyear",
+      "src_react_app_components_candidatedetailmodal_tsx",
+      "src_react_app_components_evaluationdetailmodal_tsx",
+      "src_react_app_components_registerpaymentmodal_tsx",
+      "src_react_app_components_whatsapppreferences_tsx",
+      "src_react_app_pages_assets_tsx",
+      "src_react_app_pages_events_tsx",
+      "src_react_app_pages_loans_tsx",
+      "src_shared_date_utils_ts",
+      "worker_index_formatcurrency",
+      "worker_index_getconditiontext",
+      "worker_index_getstatustext"
+    ],
+    "4": [
+      "src_worker_db_adapter_ts",
+      "worker_db_adapter_databaseadapter",
+      "worker_db_adapter_databaseadapter_count",
+      "worker_db_adapter_databaseadapter_delete",
+      "worker_db_adapter_databaseadapter_deletewhere",
+      "worker_db_adapter_databaseadapter_exec",
+      "worker_db_adapter_databaseadapter_getall",
+      "worker_db_adapter_databaseadapter_getbyid",
+      "worker_db_adapter_databaseadapter_getwhere",
+      "worker_db_adapter_databaseadapter_insert",
+      "worker_db_adapter_databaseadapter_insertmultiple",
+      "worker_db_adapter_databaseadapter_prepare",
+      "worker_db_adapter_databaseadapter_update",
+      "worker_db_adapter_databaseadapter_updatewhere",
+      "worker_db_adapter_getdb",
+      "worker_db_adapter_getsupabase",
+      "worker_db_adapter_initializesupabase",
+      "worker_db_adapter_preparedquery",
+      "worker_db_adapter_preparedquery_all",
+      "worker_db_adapter_preparedquery_bind",
+      "worker_db_adapter_preparedquery_first",
+      "worker_db_adapter_preparedquery_run",
+      "worker_db_adapter_queryresult"
+    ],
+    "5": [
+      "pages_chat_chat",
+      "shared_gemini_creategeminiservice",
+      "shared_gemini_geminiconfig",
+      "shared_gemini_geminiservice",
+      "shared_openai_chatmessage",
+      "shared_openai_chatoptions",
+      "shared_openai_createopenaiservice",
+      "shared_openai_generatetextoptions",
+      "shared_openai_openaiconfig",
+      "shared_openai_openaiservice_analyzetext",
+      "shared_openai_openaiservice_constructor",
+      "shared_openai_openaiservice_generateautoresponse",
+      "shared_openai_openaiservice_generatestructuredoutput",
+      "shared_openai_openaiservice_generatetext",
+      "shared_openai_openaiservice_sleep",
+      "shared_openai_openaiservice_streamchat",
+      "src_shared_gemini_ts",
+      "src_shared_openai_ts",
+      "src_worker_ai_endpoints_ts",
+      "worker_ai_endpoints_messages",
+      "worker_index_openaiservice"
+    ],
+    "6": [
+      "src_worker_pulse_endpoints_ts",
+      "worker_index_uniquedepts",
+      "worker_pulse_endpoints_alertid",
+      "worker_pulse_endpoints_awardpoints",
+      "worker_pulse_endpoints_caller",
+      "worker_pulse_endpoints_datefrom",
+      "worker_pulse_endpoints_dateto",
+      "worker_pulse_endpoints_days",
+      "worker_pulse_endpoints_dept",
+      "worker_pulse_endpoints_evaluatefrictionalerts",
+      "worker_pulse_endpoints_getcallerprofile",
+      "worker_pulse_endpoints_getcurrentstreak",
+      "worker_pulse_endpoints_id",
+      "worker_pulse_endpoints_points",
+      "worker_pulse_endpoints_sevendaysago",
+      "worker_pulse_endpoints_today",
+      "worker_pulse_endpoints_todayshots"
+    ],
+    "7": [
+      "shared_types_mochauser",
+      "src_worker_admin_endpoints_ts",
+      "src_worker_rate_limiter_ts",
+      "src_worker_security_logger_ts",
+      "worker_admin_endpoints_hruserid",
+      "worker_admin_endpoints_invalidperms",
+      "worker_admin_endpoints_targetuserid",
+      "worker_admin_endpoints_userswithparsedpermissions",
+      "worker_admin_endpoints_validpermissions",
+      "worker_index_employeeid",
+      "worker_rate_limiter_cleanupratelimitstore",
+      "worker_rate_limiter_ratelimitconfig",
+      "worker_rate_limiter_ratelimits",
+      "worker_security_logger_createsecuritycontext",
+      "worker_security_logger_getseverity",
+      "worker_security_logger_securityevent"
+    ],
+    "8": [
+      "src_worker_validation_ts",
+      "worker_validation_sanitizestring",
+      "worker_validation_validateci",
+      "worker_validation_validatedate",
+      "worker_validation_validateemail",
+      "worker_validation_validateenum",
+      "worker_validation_validatefloat",
+      "worker_validation_validateinteger",
+      "worker_validation_validatemoneyamount",
+      "worker_validation_validatemonth",
+      "worker_validation_validatephone",
+      "worker_validation_validatescore",
+      "worker_validation_validatetext",
+      "worker_validation_validateyear"
+    ],
+    "9": [
+      "src_react_app_app_tsx",
+      "src_worker_db_ts",
+      "src_worker_whatsapp_endpoints_ts",
+      "worker_db_db",
+      "worker_db_dbhelpers",
+      "worker_index_app",
+      "worker_index_now",
+      "worker_index_query",
+      "worker_index_updatedata",
+      "worker_whatsapp_endpoints_challenge",
+      "worker_whatsapp_endpoints_mode",
+      "worker_whatsapp_endpoints_personalizedparams",
+      "worker_whatsapp_endpoints_token"
+    ],
+    "10": [
+      "hikvision_sync_agent_agent_calculateattendancerecord",
+      "hikvision_sync_agent_agent_days_to_sync",
+      "hikvision_sync_agent_agent_groupeventsbydate",
+      "hikvision_sync_agent_agent_hikvision_config",
+      "hikvision_sync_agent_agent_hikvisionclient",
+      "hikvision_sync_agent_agent_hikvisionclient_getattendanceevents",
+      "hikvision_sync_agent_agent_hikvisionclient_getemployees",
+      "hikvision_sync_agent_agent_js",
+      "hikvision_sync_agent_agent_main",
+      "hikvision_sync_agent_agent_supabase_config",
+      "hikvision_sync_agent_agent_syncattendancedata",
+      "hikvision_sync_agent_agent_validateconfig"
+    ],
+    "11": [
+      "pages_pulseflow_alertbanner",
+      "pages_pulseflow_moods",
+      "pages_pulseflow_moodscore",
+      "pages_pulseflow_moodshotcard",
+      "pages_pulseflow_pulseflow",
+      "pages_pulseflow_rewardcard",
+      "pages_pulseflow_streakbadge",
+      "pages_pulseflow_teampulsecard",
+      "pages_pulseflow_trend_icon",
+      "pages_pulseflow_usepulsedashboard",
+      "src_react_app_pages_pulseflow_tsx"
+    ],
+    "12": [
+      "shared_whatsapp_createwhatsappservice",
+      "shared_whatsapp_sendmessageparams",
+      "shared_whatsapp_whatsappconfig",
+      "shared_whatsapp_whatsappresponse",
+      "shared_whatsapp_whatsappservice",
+      "shared_whatsapp_whatsappservice_formatphonenumber",
+      "shared_whatsapp_whatsappservice_parsewebhookmessage",
+      "shared_whatsapp_whatsappservice_sendtemplatemessage",
+      "shared_whatsapp_whatsappservice_sendtextmessage",
+      "shared_whatsapp_whatsappservice_verifywebhooksignature",
+      "src_shared_whatsapp_ts"
+    ],
+    "13": [
+      "api_assets",
+      "api_attendance",
+      "api_chat",
+      "api_loans",
+      "api_reports",
+      "hikvision_agent",
+      "migrations_postgres_schema",
+      "supabase_service",
+      "worker_db",
+      "worker_db_adapter",
+      "worker_index"
+    ],
+    "14": [
+      "src_worker_permission_middleware_ts",
+      "src_worker_permissions_ts",
+      "worker_index_bindings",
+      "worker_permission_middleware_requirepermission",
+      "worker_permissions_getuserpermissions",
+      "worker_permissions_hasanypermission",
+      "worker_permissions_haspermission",
+      "worker_permissions_role_presets"
+    ],
+    "15": [
+      "pages_auditlog_auditlog",
+      "pages_auditlog_auditlogentry",
+      "src_react_app_pages_auditlog_tsx",
+      "src_worker_audit_logger_ts",
+      "worker_audit_logger_auditaction",
+      "worker_audit_logger_auditmodule",
+      "worker_audit_logger_createauditcontext",
+      "worker_audit_logger_logaudit"
+    ],
+    "16": [
+      "components_payslipuploadmodal_batchuploadresult",
+      "components_payslipuploadmodal_payslipuploadmodalprops",
+      "components_payslipuploadmodal_years",
+      "src_react_app_components_payslipuploadmodal_tsx",
+      "src_react_app_pages_payslips_tsx",
+      "worker_index_currentyear",
+      "worker_index_months"
+    ],
+    "17": [
+      "src_worker_backup_service_ts",
+      "worker_backup_service_backupoptions",
+      "worker_backup_service_createdatabasebackup",
+      "worker_backup_service_generatesqlbackup",
+      "worker_backup_service_restoredatabasebackup",
+      "worker_backup_service_tablebackup"
+    ],
+    "18": [
+      "shared_types_authuser",
+      "src_worker_supabase_auth_ts",
+      "worker_supabase_auth_authmiddleware",
+      "worker_supabase_auth_base64urldecode",
+      "worker_supabase_auth_verifyjwt"
+    ],
+    "19": [
+      "pages_attendancedashboard_attendancerecord",
+      "pages_attendancedashboard_attendancesummary",
+      "pages_attendancedashboard_kpicard",
+      "src_react_app_pages_attendancedashboard_tsx"
+    ],
+    "20": [
+      "shared_supabase_client_database",
+      "shared_supabase_client_supabaseadmin",
+      "src_shared_supabase_client_ts"
+    ],
+    "21": [
+      "components_broadcastmodal_broadcastdata",
+      "components_broadcastmodal_broadcastmodal",
+      "components_broadcastmodal_broadcastmodalprops"
+    ],
+    "22": [
+      "lib_supabase_supabase",
+      "lib_supabase_supabaseanonkey",
+      "lib_supabase_supabaseurl"
+    ],
+    "23": [
+      "components_loanformmodal_loanformmodal",
+      "components_loanformmodal_loanformmodalprops"
+    ],
+    "24": [
+      "components_interviewformmodal_interviewformmodalprops",
+      "src_react_app_components_interviewformmodal_tsx"
+    ],
+    "25": [
+      "components_pollcomponent_pollcomponent",
+      "components_pollcomponent_pollcomponentprops"
+    ],
+    "26": [
+      "components_importemployeesmodal_importresult",
+      "src_react_app_components_importemployeesmodal_tsx"
+    ],
+    "27": [
+      "components_employeeassethistorymodal_assethistoryitem",
+      "src_react_app_components_employeeassethistorymodal_tsx"
+    ],
+    "28": [
+      "pages_requestresponsedashboard_requestreport",
+      "src_react_app_pages_requestresponsedashboard_tsx"
+    ],
+    "29": [
+      "tailwind_config_js"
+    ],
+    "30": [
+      "eslint_config_js"
+    ],
+    "31": [
+      "vite_config_ts"
+    ],
+    "32": [
+      "postcss_config_js"
+    ],
+    "33": [
+      "src_react_app_vite_env_d_ts"
+    ],
+    "34": [
+      "src_react_app_main_tsx"
+    ],
+    "35": [
+      "src_react_app_components_candidateeditmodal_tsx"
+    ],
+    "36": [
+      "components_eventformmodal_eventformmodal"
+    ],
+    "37": [
+      "src_react_app_components_employeereportmodal_tsx"
+    ],
+    "38": [
+      "src_react_app_components_requestreportmodal_tsx"
+    ],
+    "39": [
+      "components_assetreportmodal_assetreportmodal"
+    ],
+    "40": [
+      "src_react_app_components_selfevaluationmodal_tsx"
+    ],
+    "41": [
+      "src_react_app_components_sessiontimeoutmodal_tsx"
+    ],
+    "42": [
+      "src_react_app_components_familydependentsmanager_tsx"
+    ],
+    "43": [
+      "components_loanreportmodal_loanreportmodal"
+    ],
+    "44": [
+      "src_react_app_components_whatsappbroadcastmodal_tsx"
+    ],
+    "45": [
+      "src_react_app_components_managerevaluationmodal_tsx"
+    ],
+    "46": [
+      "src_react_app_components_permissionsmanagement_tsx"
+    ],
+    "47": [
+      "pages_authcallback_authcallback"
+    ]
+  },
+  "cohesion": {
+    "0": 0.02,
+    "1": 0.06,
+    "2": 0.05,
+    "3": 0.08,
+    "4": 0.1,
+    "5": 0.16,
+    "6": 0.12,
+    "7": 0.16,
+    "8": 0.24,
+    "9": 0.17,
+    "10": 0.26,
+    "11": 0.2,
+    "12": 0.22,
+    "13": 0.2,
+    "14": 0.29,
+    "15": 0.36,
+    "16": 0.29,
+    "17": 0.4,
+    "18": 0.6,
+    "19": 0.5,
+    "20": 0.67,
+    "21": 0.67,
+    "22": 0.67,
+    "23": 1.0,
+    "24": 1.0,
+    "25": 1.0,
+    "26": 1.0,
+    "27": 1.0,
+    "28": 1.0,
+    "29": 1.0,
+    "30": 1.0,
+    "31": 1.0,
+    "32": 1.0,
+    "33": 1.0,
+    "34": 1.0,
+    "35": 1.0,
+    "36": 1.0,
+    "37": 1.0,
+    "38": 1.0,
+    "39": 1.0,
+    "40": 1.0,
+    "41": 1.0,
+    "42": 1.0,
+    "43": 1.0,
+    "44": 1.0,
+    "45": 1.0,
+    "46": 1.0,
+    "47": 1.0
+  },
+  "gods": [
+    {
+      "id": "contexts_authcontext_useauth",
+      "label": "useAuth()",
+      "degree": 25
+    },
+    {
+      "id": "worker_db_adapter_databaseadapter",
+      "label": "DatabaseAdapter",
+      "degree": 14
+    },
+    {
+      "id": "hooks_usepermissions_usepermissions",
+      "label": "usePermissions()",
+      "degree": 13
+    },
+    {
+      "id": "shared_date_utils_formatdate",
+      "label": "formatDate()",
+      "degree": 11
+    },
+    {
+      "id": "worker_index_openaiservice",
+      "label": "openaiService",
+      "degree": 11
+    },
+    {
+      "id": "worker_index",
+      "label": "Main API Worker",
+      "degree": 10
+    },
+    {
+      "id": "shared_gemini_geminiservice",
+      "label": "GeminiService",
+      "degree": 8
+    },
+    {
+      "id": "shared_whatsapp_whatsappservice",
+      "label": "WhatsAppService",
+      "degree": 8
+    },
+    {
+      "id": "worker_index_bindings",
+      "label": "Bindings",
+      "degree": 7
+    },
+    {
+      "id": "worker_supabase_auth_authmiddleware",
+      "label": "authMiddleware()",
+      "degree": 7
+    }
+  ],
+  "surprises": [
+    {
+      "source": "Main API Worker",
+      "target": "PostgreSQL Schema",
+      "source_files": [
+        "src/worker/index.ts",
+        "migrations/postgres-schema.sql"
+      ],
+      "confidence": "INFERRED",
+      "relation": "references",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; peripheral node `PostgreSQL Schema` unexpectedly reaches hub `Main API Worker`"
+    },
+    {
+      "source": "Attendance System API",
+      "target": "Hikvision Sync Agent",
+      "source_files": [
+        "src/worker/index.ts",
+        "hikvision-sync-agent/agent.js"
+      ],
+      "confidence": "INFERRED",
+      "relation": "conceptually_related_to",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories"
+    },
+    {
+      "source": "LoanDetailModal()",
+      "target": "formatDate()",
+      "source_files": [
+        "src/react-app/components/LoanDetailModal.tsx",
+        "src/shared/date-utils.ts"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source; peripheral node `LoanDetailModal()` unexpectedly reaches hub `formatDate()`"
+    },
+    {
+      "source": "Request",
+      "target": "getStatusText()",
+      "source_files": [
+        "src/shared/types.ts",
+        "src/worker/index.ts"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source; bridges separate communities"
+    },
+    {
+      "source": "Chat()",
+      "target": "usePermissions()",
+      "source_files": [
+        "src/react-app/pages/Chat.tsx",
+        "src/react-app/hooks/usePermissions.ts"
+      ],
+      "confidence": "INFERRED",
+      "relation": "calls",
+      "why": "inferred connection - not explicitly stated in source; bridges separate communities"
+    }
+  ],
+  "tokens": {
+    "input": 26583,
+    "output": 1501
+  }
+}
