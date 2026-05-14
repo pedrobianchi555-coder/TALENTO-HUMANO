@@ -15,10 +15,6 @@
     "mtime": 1765499749.0,
     "hash": "c735540bb63936a123bc867d950c9f69"
   },
-  "/home/user/TALENTO-HUMANO/src/shared/supabase-client.ts": {
-    "mtime": 1777942376.035202,
-    "hash": "fc4ed371644471cef2f4d8104c22f5a5"
-  },
   "/home/user/TALENTO-HUMANO/src/shared/openai.ts": {
     "mtime": 1765499749.0,
     "hash": "13d7c6602e54ed124daad74d1e7e200c"
@@ -304,8 +300,8 @@
     "hash": "c662b336341ae6c0fab2263c44dc4ab4"
   },
   "/home/user/TALENTO-HUMANO/src/worker/index.ts": {
-    "mtime": 1778788920.459341,
-    "hash": "891e172863547fdca999b1869d684822"
+    "mtime": 1778789245.0577204,
+    "hash": "0f4ffe24bcad1e2bbf5151a8164c0802"
   },
   "/home/user/TALENTO-HUMANO/src/worker/validation.ts": {
     "mtime": 1765499749.0,
@@ -328,8 +324,8 @@
     "hash": "a699a24e9201179b6c65f70efa9173b3"
   },
   "/home/user/TALENTO-HUMANO/src/worker/db.ts": {
-    "mtime": 1777942560.5072129,
-    "hash": "bb1aada3ad3f3cc0f0f3c2d8dfbe75d1"
+    "mtime": 1778789355.057787,
+    "hash": "63087b6e610e20e3320ad553918cc8b5"
   },
   "/home/user/TALENTO-HUMANO/src/worker/security-logger.ts": {
     "mtime": 1765499749.0,
@@ -623,18 +619,6 @@
     "mtime": 1777945177.4486165,
     "hash": "c4207d217cea979c4e5198bd1fbd00e5"
   },
-  "/home/user/TALENTO-HUMANO/CONTINUATION_SESSION_3_STATUS.md": {
-    "mtime": 1777944167.0473084,
-    "hash": "9cd3b2ef7ddd7e250a08f0df37012c26"
-  },
-  "/home/user/TALENTO-HUMANO/PROGRESS_SUMMARY.md": {
-    "mtime": 1777942812.2872279,
-    "hash": "2723529448096649bd8ef2f3013cc5e1"
-  },
-  "/home/user/TALENTO-HUMANO/MIGRATION_PLAN.md": {
-    "mtime": 1777942654.2672186,
-    "hash": "840a8d7c305745388fd4029c5ff780e4"
-  },
   "/home/user/TALENTO-HUMANO/README.md": {
     "mtime": 1777942453.5832067,
     "hash": "deae3f8bcd24e26d9bedb1fea51fbd7c"
@@ -647,10 +631,6 @@
     "mtime": 1778686769.356554,
     "hash": "da79aa9343cd2b362206f03762160abc"
   },
-  "/home/user/TALENTO-HUMANO/PHASE3_MIGRATION_STATUS.md": {
-    "mtime": 1777943352.1186693,
-    "hash": "4640a521206cfab7b8dfbc418df8996f"
-  },
   "/home/user/TALENTO-HUMANO/HIKVISION_ATTENDANCE_SETUP.md": {
     "mtime": 1777945271.284613,
     "hash": "2d012c54d8f554284d6a538ba225eff9"
@@ -662,21 +642,5 @@
   "/home/user/TALENTO-HUMANO/ATTENDANCE_SYSTEM_GUIDE.md": {
     "mtime": 1777945220.3566148,
     "hash": "ca3dbd351842949645cffd9bb95747a5"
-  },
-  "/home/user/TALENTO-HUMANO/SESSION_FINAL_STATUS.md": {
-    "mtime": 1777943045.0792418,
-    "hash": "53a5c08be92b8eec26ce7920e09739b7"
-  },
-  "/home/user/TALENTO-HUMANO/ARCHITECTURE.md": {
-    "mtime": 1777942411.4072042,
-    "hash": "f7db0809dc659e5eadbbb8f3ae07743b"
-  },
-  "/home/user/TALENTO-HUMANO/PHASE2_STATUS.md": {
-    "mtime": 1777942720.9752226,
-    "hash": "2df2dccacbad9af6dc9292979a6a41fc"
-  },
-  "/home/user/TALENTO-HUMANO/CONTINUATION_SESSION_STATUS.md": {
-    "mtime": 1777943799.7952867,
-    "hash": "f08885895386fe4523c71ebfa4b136ad"
   }
 }

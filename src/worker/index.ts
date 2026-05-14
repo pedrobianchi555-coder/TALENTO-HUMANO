@@ -14,7 +14,7 @@ import { logSecurityEvent, SecurityEventType, createSecurityContext } from "./se
 import { auditLog, AuditAction, AuditModule } from "./audit-logger";
 import { createDatabaseBackup } from "./backup-service";
 import * as validator from "./validation";
-import { db, dbHelpers } from "./db";
+import { db } from "./db";
 
 type Bindings = {
   SUPABASE_URL: string;
