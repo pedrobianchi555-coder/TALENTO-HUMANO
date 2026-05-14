@@ -3,8 +3,6 @@ export interface AuthUser {
   email: string;
 }
 
-/** @deprecated Use AuthUser */
-export type MochaUser = AuthUser;
 
 export interface UserProfile {
   id: number;

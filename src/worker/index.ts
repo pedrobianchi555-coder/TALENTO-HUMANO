@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { authMiddleware, type AuthUser as MochaUser } from "./supabase-auth";
+import { authMiddleware, type AuthUser } from "./supabase-auth";
 import { createOpenAIService } from "../shared/openai";
 import aiRoutes from "./ai-endpoints";
 import adminRoutes from "./admin-endpoints";
@@ -56,24 +56,24 @@ app.route('/', pulseRoutes);
 // Get current user with enhanced profile
 app.get("/api/users/me", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Try to find user in our database
     const { data: userResult, error } = await db
       .from('users')
       .select('*')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (userResult) {
       return c.json({
-        ...mochaUser,
+        ...authUser,
         profile: userResult
       });
     } else if (error?.code === 'PGRST116') {
       // Row not found - return just the Mocha user if no profile exists yet
       return c.json({
-        ...mochaUser,
+        ...authUser,
         profile: null
       });
     } else if (error) {
@@ -81,7 +81,7 @@ app.get("/api/users/me", authMiddleware, async (c) => {
     }
 
     return c.json({
-      ...mochaUser,
+      ...authUser,
       profile: null
     });
   } catch (error) {
@@ -93,8 +93,8 @@ app.get("/api/users/me", authMiddleware, async (c) => {
 // Create or update user profile
 app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
-    console.log('[PROFILE UPDATE] Request for user:', mochaUser.id, mochaUser.email);
+    const authUser = c.get("user") as AuthUser;
+    console.log('[PROFILE UPDATE] Request for user:', authUser.id, authUser.email);
     
     const body = await c.req.json();
     console.log('[PROFILE UPDATE] Data received:', JSON.stringify(body, null, 2));
@@ -141,7 +141,7 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'first_name' }
       });
       return c.json({ error: 'El nombre es requerido' }, 400);
@@ -152,7 +152,7 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'last_name' }
       });
       return c.json({ error: 'El apellido es requerido' }, 400);
@@ -163,7 +163,7 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'ci' }
       });
       return c.json({ error: 'La cédula de identidad es requerida y debe ser válida' }, 400);
@@ -195,7 +195,7 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
     const { data: existingUserByMochaId, error: err1 } = await db
       .from('users')
       .select('id, ci, email')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (existingUserByMochaId) {
@@ -209,7 +209,7 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
           .from('users')
           .select('id')
           .eq('ci', cleanData.ci)
-          .neq('mocha_user_id', mochaUser.id)
+          .neq('mocha_user_id', authUser.id)
           .single();
 
         if (ciConflict) {
@@ -222,7 +222,7 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
       const { error: updateErr } = await db
         .from('users')
         .update({
-          email: mochaUser.email,
+          email: authUser.email,
           ...cleanData,
           updated_at: new Date().toISOString(),
         })
@@ -240,7 +240,7 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
     const { data: existingUserByEmail } = await db
       .from('users')
       .select('id, mocha_user_id, ci')
-      .eq('email', mochaUser.email)
+      .eq('email', authUser.email)
       .single();
 
     const { data: existingUserByCI } = cleanData.ci
@@ -270,8 +270,8 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
       const { error: linkErr } = await db
         .from('users')
         .update({
-          mocha_user_id: mochaUser.id,
-          email: mochaUser.email,
+          mocha_user_id: authUser.id,
+          email: authUser.email,
           ...cleanData,
           updated_at: new Date().toISOString(),
         })
@@ -302,12 +302,12 @@ app.post("/api/users/profile", authMiddleware, rateLimiter(RateLimits.MUTATION),
 // Get dashboard statistics
 app.get("/api/dashboard/stats", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -475,17 +475,17 @@ app.get("/api/birthdays", authMiddleware, async (c) => {
 // Get all employees (HR only)
 app.get("/api/employees", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
-      console.error('User profile not found for mocha_user_id:', mochaUser.id);
+      console.error('User profile not found for mocha_user_id:', authUser.id);
       return c.json({ error: 'User profile not found' }, 404);
     }
 
@@ -532,13 +532,13 @@ app.get("/api/employees", authMiddleware, async (c) => {
 // Get requests (user's own or all for HR)
 app.get("/api/requests", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -580,13 +580,13 @@ app.get("/api/requests", authMiddleware, async (c) => {
 // Get documents
 app.get("/api/documents", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role and department
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('role, department')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -621,13 +621,13 @@ app.get("/api/documents", authMiddleware, async (c) => {
 // Get loans (user's own or all for HR)
 app.get("/api/loans", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -669,12 +669,12 @@ app.get("/api/loans", authMiddleware, async (c) => {
 // Get detailed loans with additional info
 app.get("/api/loans/detailed", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userErr) {
@@ -742,12 +742,12 @@ app.get("/api/loans/detailed", authMiddleware, async (c) => {
 // Create loan with repayment plan and installments
 app.post("/api/loans", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user");
+    const authUser = c.get("user");
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser!.id)
+      .eq('mocha_user_id', authUser!.id)
       .single();
 
     if (!userProfile || userErr) {
@@ -950,13 +950,13 @@ app.get("/api/loans/:id/payments", authMiddleware, async (c) => {
 // Register loan payment
 app.post("/api/loans/:id/payments", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user");
+    const authUser = c.get("user");
     const loanId = parseInt(c.req.param('id'));
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser!.id)
+      .eq('mocha_user_id', authUser!.id)
       .single();
 
     if (!userProfile || userErr) {
@@ -1110,13 +1110,13 @@ app.delete("/api/loans/:id", authMiddleware, requirePermission(PERMISSIONS.LOAN_
 // Get evaluations (user's own or all for HR)
 app.get("/api/evaluations", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role and permissions
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -1170,13 +1170,13 @@ app.get("/api/evaluations", authMiddleware, async (c) => {
 // Get evaluation cycles (HR only)
 app.get("/api/evaluation-cycles", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role and permission
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -1204,7 +1204,7 @@ app.get("/api/evaluation-cycles", authMiddleware, async (c) => {
 // Submit self-evaluation
 app.put("/api/evaluations/:id/self-evaluation", authMiddleware, rateLimiter(RateLimits.MUTATION), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const evaluationId = validator.validateInteger(c.req.param('id'), 1);
     const { self_score, self_comments } = await c.req.json();
 
@@ -1220,7 +1220,7 @@ app.put("/api/evaluations/:id/self-evaluation", authMiddleware, rateLimiter(Rate
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'self_score', value: self_score }
       });
       return c.json({ error: 'Invalid score. Must be between 1 and 5' }, 400);
@@ -1230,7 +1230,7 @@ app.put("/api/evaluations/:id/self-evaluation", authMiddleware, rateLimiter(Rate
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'self_comments' }
       });
       return c.json({ error: 'Comments are required (10-2000 characters)' }, 400);
@@ -1239,7 +1239,7 @@ app.put("/api/evaluations/:id/self-evaluation", authMiddleware, rateLimiter(Rate
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -1328,7 +1328,7 @@ app.put("/api/evaluations/:id/self-evaluation", authMiddleware, rateLimiter(Rate
 // Submit manager evaluation
 app.put("/api/evaluations/:id/manager-evaluation", authMiddleware, rateLimiter(RateLimits.MUTATION), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const evaluationId = validator.validateInteger(c.req.param('id'), 1);
     const { manager_score, manager_comments } = await c.req.json();
 
@@ -1344,7 +1344,7 @@ app.put("/api/evaluations/:id/manager-evaluation", authMiddleware, rateLimiter(R
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'manager_score', value: manager_score }
       });
       return c.json({ error: 'Invalid score. Must be between 1 and 5' }, 400);
@@ -1354,7 +1354,7 @@ app.put("/api/evaluations/:id/manager-evaluation", authMiddleware, rateLimiter(R
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'manager_comments' }
       });
       return c.json({ error: 'Comments are required (10-2000 characters)' }, 400);
@@ -1363,7 +1363,7 @@ app.put("/api/evaluations/:id/manager-evaluation", authMiddleware, rateLimiter(R
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -1450,13 +1450,13 @@ app.put("/api/evaluations/:id/manager-evaluation", authMiddleware, rateLimiter(R
 // Create evaluation cycle (HR only)
 app.post("/api/evaluation-cycles", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role and permission
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -1511,14 +1511,14 @@ app.post("/api/evaluation-cycles", authMiddleware, async (c) => {
 // Activate evaluation cycle (HR only)
 app.put("/api/evaluation-cycles/:id/activate", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const cycleId = parseInt(c.req.param('id'));
 
     // Check if user has HR role and permission
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -1650,13 +1650,13 @@ app.put("/api/evaluation-cycles/:id/activate", authMiddleware, async (c) => {
 // Get events
 app.get("/api/events", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile with both department, sede, and role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, department, sede, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -1711,13 +1711,13 @@ app.get("/api/events", authMiddleware, async (c) => {
 // Create event (HR only)
 app.post("/api/events", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -1766,7 +1766,7 @@ app.post("/api/events", authMiddleware, async (c) => {
 // RSVP to event
 app.post("/api/events/:id/rsvp", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const eventId = parseInt(c.req.param('id'));
     const { status } = await c.req.json();
 
@@ -1774,7 +1774,7 @@ app.post("/api/events/:id/rsvp", authMiddleware, async (c) => {
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -1807,13 +1807,13 @@ app.post("/api/events/:id/rsvp", authMiddleware, async (c) => {
 // Get complaints (user's own or all for HR)
 app.get("/api/complaints", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -1886,7 +1886,7 @@ app.put("/api/complaints/:id/status", authMiddleware, requirePermission(PERMISSI
 // Create request
 app.post("/api/requests", authMiddleware, rateLimiter(RateLimits.MUTATION), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const { type, category, details } = await c.req.json();
     
     console.log('[CREATE REQUEST] Raw input:', { type, category, details: details?.substring(0, 50) });
@@ -1902,7 +1902,7 @@ app.post("/api/requests", authMiddleware, rateLimiter(RateLimits.MUTATION), asyn
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { type: cleanType ? 'valid' : 'invalid', details: cleanDetails ? 'valid' : 'invalid' }
       });
       return c.json({ error: 'Type and details are required' }, 400);
@@ -1918,7 +1918,7 @@ app.post("/api/requests", authMiddleware, rateLimiter(RateLimits.MUTATION), asyn
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'category', value: category }
       });
       return c.json({ error: 'Category is required and must be one of: Gestión Laboral, Bienestar, Desarrollo' }, 400);
@@ -1928,11 +1928,11 @@ app.post("/api/requests", authMiddleware, rateLimiter(RateLimits.MUTATION), asyn
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
-      console.error('[CREATE REQUEST] User profile not found for mocha_user_id:', mochaUser.id);
+      console.error('[CREATE REQUEST] User profile not found for mocha_user_id:', authUser.id);
       return c.json({ error: 'User profile not found' }, 404);
     }
 
@@ -1973,7 +1973,7 @@ app.post("/api/requests", authMiddleware, rateLimiter(RateLimits.MUTATION), asyn
 // Update request status (HR only)
 app.put("/api/requests/:id/status", authMiddleware, requirePermission(PERMISSIONS.REQUEST_MANAGE_STATUS), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const requestId = parseInt(c.req.param('id'));
     const { status, rejection_reason } = await c.req.json();
 
@@ -1981,7 +1981,7 @@ app.put("/api/requests/:id/status", authMiddleware, requirePermission(PERMISSION
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -2023,13 +2023,13 @@ app.put("/api/requests/:id/status", authMiddleware, requirePermission(PERMISSION
 // Get managers list (HR only)
 app.get("/api/employees/managers", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2055,13 +2055,13 @@ app.get("/api/employees/managers", authMiddleware, async (c) => {
 // Update employee (HR only)
 app.put("/api/employees/:id", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2108,20 +2108,20 @@ app.put("/api/employees/:id", authMiddleware, async (c) => {
 // Import employees from CSV (HR only)
 app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPLOAD), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.PERMISSION_DENIED,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { action: 'import_csv' }
       });
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -2136,7 +2136,7 @@ app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPL
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { csv: cleanCSV ? 'valid' : 'invalid', company: cleanCompanyName ? 'valid' : 'invalid' }
       });
       return c.json({ error: 'CSV content and company name are required' }, 400);
@@ -2145,8 +2145,8 @@ app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPL
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.BULK_OPERATION,
-      userId: mochaUser.id,
-      userEmail: mochaUser.email,
+      userId: authUser.id,
+      userEmail: authUser.email,
       details: { action: 'csv_import', company: cleanCompanyName }
     });
 
@@ -2270,13 +2270,13 @@ app.post("/api/employees/import-csv", authMiddleware, rateLimiter(RateLimits.UPL
 // Create employee (HR only)
 app.post("/api/employees", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2328,14 +2328,14 @@ app.post("/api/employees", authMiddleware, async (c) => {
 // Inactivate employee (HR only)
 app.put("/api/employees/:id/inactivate", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user");
+    const authUser = c.get("user");
     const employeeId = parseInt(c.req.param('id'));
     const { reason } = await c.req.json();
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, first_name, last_name, role')
-      .eq('mocha_user_id', mochaUser!.id)
+      .eq('mocha_user_id', authUser!.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2397,14 +2397,14 @@ app.put("/api/employees/:id/inactivate", authMiddleware, async (c) => {
 // Activate employee (HR only)
 app.put("/api/employees/:id/activate", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user");
+    const authUser = c.get("user");
     const employeeId = parseInt(c.req.param('id'));
     const { reason } = await c.req.json();
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, first_name, last_name, role')
-      .eq('mocha_user_id', mochaUser!.id)
+      .eq('mocha_user_id', authUser!.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2466,21 +2466,21 @@ app.put("/api/employees/:id/activate", authMiddleware, async (c) => {
 // Delete employee (HR only)
 app.delete("/api/employees/:id", authMiddleware, rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
-    const mochaUser = c.get("user");
+    const authUser = c.get("user");
     const employeeId = parseInt(c.req.param('id'));
     const reason = c.req.query('reason') || 'No reason provided';
 
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.SENSITIVE_OPERATION,
-      userId: mochaUser!.id,
+      userId: authUser!.id,
       details: { action: 'delete_employee', employeeId, reason }
     });
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, first_name, last_name, role')
-      .eq('mocha_user_id', mochaUser!.id)
+      .eq('mocha_user_id', authUser!.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2575,13 +2575,13 @@ app.delete("/api/employees/:id", authMiddleware, rateLimiter(RateLimits.SENSITIV
 // Get candidates with interviews (HR only)
 app.get("/api/candidates", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2626,13 +2626,13 @@ app.get("/api/candidates", authMiddleware, async (c) => {
 // Test Gemini API connection with rate limit awareness (HR only)
 app.get("/api/ai/test", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2700,13 +2700,13 @@ app.get("/api/ai/test", authMiddleware, async (c) => {
 // Create candidate without AI analysis (HR only)
 app.post("/api/candidates", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2761,14 +2761,14 @@ app.post("/api/candidates", authMiddleware, async (c) => {
 // Process candidate with AI analysis (HR only)
 app.post("/api/candidates/:id/process-ai", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const candidateId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -2975,14 +2975,14 @@ JSON format:
 // Update candidate manually (HR only)
 app.put("/api/candidates/:id", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const candidateId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3044,14 +3044,14 @@ app.put("/api/candidates/:id", authMiddleware, async (c) => {
 // Delete candidate (HR only)
 app.delete("/api/candidates/:id", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const candidateId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3084,13 +3084,13 @@ app.delete("/api/candidates/:id", authMiddleware, async (c) => {
 // AI-powered candidate search (HR only)
 app.post("/api/ai/search-candidates", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3146,13 +3146,13 @@ Return up to 5 candidates ordered by relevance. If no candidates match well, ret
 // Create interview (HR only)
 app.post("/api/interviews", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3198,14 +3198,14 @@ app.post("/api/interviews", authMiddleware, async (c) => {
 // Update interview (HR only)
 app.put("/api/interviews/:id", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const interviewId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3284,12 +3284,12 @@ app.get("/api/employee-audit-log", authMiddleware, requirePermission(PERMISSIONS
 // Create document (HR only)
 app.post("/api/documents", authMiddleware, requirePermission(PERMISSIONS.DOCUMENT_UPLOAD), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -3336,7 +3336,7 @@ app.post("/api/documents", authMiddleware, requirePermission(PERMISSIONS.DOCUMEN
 // Create complaint
 app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const requestBody = await c.req.json();
     const { category, details, is_anonymous } = requestBody;
     
@@ -3344,7 +3344,7 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
       category,
       detailsLength: details?.length,
       is_anonymous,
-      mochaUserId: mochaUser.id
+      mochaUserId: authUser.id
     });
     
     // Validate and sanitize inputs
@@ -3355,7 +3355,7 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'details', reason: 'required or too short' }
       });
       return c.json({ error: 'Complaint details are required (min 20 characters)' }, 400);
@@ -3365,11 +3365,11 @@ app.post("/api/complaints", authMiddleware, rateLimiter(RateLimits.MUTATION), as
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
-      console.log('[CREATE COMPLAINT] User profile not found for mocha_user_id:', mochaUser.id);
+      console.log('[CREATE COMPLAINT] User profile not found for mocha_user_id:', authUser.id);
       return c.json({ error: 'User profile not found' }, 404);
     }
 
@@ -3485,13 +3485,13 @@ app.get("/api/asset-categories", authMiddleware, async (c) => {
 // Get assets (user's assigned assets or all for HR)
 app.get("/api/assets", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Get user profile to check role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -3578,13 +3578,13 @@ app.get("/api/assets", authMiddleware, async (c) => {
 // Create asset (HR only)
 app.post("/api/assets", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3647,14 +3647,14 @@ app.post("/api/assets", authMiddleware, async (c) => {
 // Update asset (HR only)
 app.put("/api/assets/:id", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const assetId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3742,13 +3742,13 @@ app.put("/api/assets/:id", authMiddleware, async (c) => {
 // Create asset assignment (HR only)
 app.post("/api/asset-assignments", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3796,14 +3796,14 @@ app.post("/api/asset-assignments", authMiddleware, async (c) => {
 // Return asset (HR only)
 app.put("/api/assets/:id/return", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const assetId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3849,13 +3849,13 @@ app.put("/api/assets/:id/return", authMiddleware, async (c) => {
 // Create asset maintenance record (HR only)
 app.post("/api/asset-maintenance", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3917,13 +3917,13 @@ app.post("/api/asset-maintenance", authMiddleware, async (c) => {
 // Get asset assignments (HR only)
 app.get("/api/asset-assignments", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -3961,13 +3961,13 @@ app.get("/api/asset-assignments", authMiddleware, async (c) => {
 // Get asset maintenance records (HR only)
 app.get("/api/asset-maintenance", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -4003,14 +4003,14 @@ app.get("/api/asset-maintenance", authMiddleware, async (c) => {
 // Get asset history (assignments, maintenance, incidents) (HR only)
 app.get("/api/assets/:id/history", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const assetId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -4096,13 +4096,13 @@ app.get("/api/assets/:id/history", authMiddleware, async (c) => {
 // Create asset incident (HR only)
 app.post("/api/asset-incidents", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -4149,14 +4149,14 @@ app.post("/api/asset-incidents", authMiddleware, async (c) => {
 // Update incident resolution (HR only)
 app.put("/api/asset-incidents/:id/resolve", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const incidentId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -4835,14 +4835,14 @@ app.get("/api/reports/employees/export-pdf", authMiddleware, requirePermission(P
 // Get employee asset assignment history (HR only)
 app.get("/api/employees/:id/asset-history", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const employeeId = parseInt(c.req.param('id'));
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -4891,13 +4891,13 @@ app.get("/api/employees/:id/asset-history", authMiddleware, async (c) => {
 // Get asset incidents (HR only)
 app.get("/api/asset-incidents", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Check if user has HR role
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userProfile.role !== 'HR') {
@@ -4945,12 +4945,12 @@ app.get("/api/asset-incidents", authMiddleware, async (c) => {
 // Get conversations for current user
 app.get("/api/chat/conversations", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userErr) {
@@ -5098,8 +5098,8 @@ app.get("/api/chat/conversations", authMiddleware, async (c) => {
 // Send message
 app.post("/api/chat/messages", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
-    if (!mochaUser) {
+    const authUser = c.get("user") as AuthUser;
+    if (!authUser) {
       return c.json({ error: 'User not authenticated' }, 401);
     }
     const { conversation_id, text, is_auto_response, employee_id } = await c.req.json();
@@ -5107,7 +5107,7 @@ app.post("/api/chat/messages", authMiddleware, async (c) => {
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, first_name, last_name')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userErr) {
@@ -5246,8 +5246,8 @@ app.post("/api/chat/messages", authMiddleware, async (c) => {
 // Send broadcast
 app.post("/api/chat/broadcast", authMiddleware, requirePermission(PERMISSIONS.CHAT_SEND_BROADCAST), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
-    if (!mochaUser) {
+    const authUser = c.get("user") as AuthUser;
+    if (!authUser) {
       return c.json({ error: 'User not authenticated' }, 401);
     }
     const { target, message, poll } = await c.req.json();
@@ -5255,7 +5255,7 @@ app.post("/api/chat/broadcast", authMiddleware, requirePermission(PERMISSIONS.CH
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile || userErr) {
@@ -5425,14 +5425,14 @@ app.get("/api/chat/polls", authMiddleware, async (c) => {
 // Vote on poll
 app.post("/api/chat/polls/:id/vote", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const pollId = parseInt(c.req.param('id'));
     const { option_index } = await c.req.json();
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser!.id)
+      .eq('mocha_user_id', authUser!.id)
       .single();
 
     if (!userProfile || userErr) {
@@ -5486,8 +5486,8 @@ app.post("/api/chat/polls/:id/vote", authMiddleware, async (c) => {
 // File upload endpoint
 app.post('/api/upload', authMiddleware, rateLimiter(RateLimits.UPLOAD), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
-    if (!mochaUser) {
+    const authUser = c.get("user") as AuthUser;
+    if (!authUser) {
       return c.json({ error: 'User not authenticated' }, 401);
     }
 
@@ -5495,7 +5495,7 @@ app.post('/api/upload', authMiddleware, rateLimiter(RateLimits.UPLOAD), async (c
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -5517,7 +5517,7 @@ app.post('/api/upload', authMiddleware, rateLimiter(RateLimits.UPLOAD), async (c
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { reason: 'File too large', size: file.size }
       });
       return c.json({ error: 'File size exceeds 10MB limit' }, 400);
@@ -5531,7 +5531,7 @@ app.post('/api/upload', authMiddleware, rateLimiter(RateLimits.UPLOAD), async (c
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { reason: 'Invalid file type', extension: fileExtension }
       });
       return c.json({ error: 'File type not allowed' }, 400);
@@ -5626,12 +5626,12 @@ app.get('/api/files/*', async (c) => {
 // Get payslips (user's own or all for HR)
 app.get("/api/payslips", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role, hr_permissions')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -5688,12 +5688,12 @@ app.get("/api/payslips", authMiddleware, async (c) => {
 // Batch upload payslips (HR only)
 app.post("/api/payslips/batch-upload", authMiddleware, requirePermission(PERMISSIONS.PAYSLIP_UPLOAD), rateLimiter(RateLimits.UPLOAD), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -5715,7 +5715,7 @@ app.post("/api/payslips/batch-upload", authMiddleware, requirePermission(PERMISS
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser!.id,
+        userId: authUser!.id,
         details: { month: rawMonth, year: rawYear, fileCount: files?.length }
       });
       return c.json({ error: 'Month, year, and at least one file are required' }, 400);
@@ -5724,7 +5724,7 @@ app.post("/api/payslips/batch-upload", authMiddleware, requirePermission(PERMISS
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.BULK_OPERATION,
-      userId: mochaUser!.id,
+      userId: authUser!.id,
       details: { action: 'batch_payslip_upload', fileCount: files.length, month, year }
     });
 
@@ -5848,12 +5848,12 @@ app.post("/api/payslips/batch-upload", authMiddleware, requirePermission(PERMISS
 // Create payslip (HR only)
 app.post("/api/payslips", authMiddleware, requirePermission(PERMISSIONS.PAYSLIP_UPLOAD), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -6708,12 +6708,12 @@ app.get("/api/audit-log", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE
 // Export audit log (HR only)
 app.get("/api/audit-log/export", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE_AUDIT_LOG), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, email')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -6818,12 +6818,12 @@ app.get("/api/backups/history", authMiddleware, requirePermission(PERMISSIONS.HR
 // Create database backup (HR only)
 app.post("/api/backups/create", authMiddleware, requirePermission(PERMISSIONS.HR_ADMIN), rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, first_name, last_name, email')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -6932,13 +6932,13 @@ app.get("/api/backups/:id/download", authMiddleware, requirePermission(PERMISSIO
 // Family dependents endpoints
 app.get("/api/family-dependents", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const queryUserId = c.req.query('user_id');
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -6968,13 +6968,13 @@ app.get("/api/family-dependents", authMiddleware, async (c) => {
 
 app.post("/api/family-dependents", authMiddleware, rateLimiter(RateLimits.MUTATION), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const { user_id, full_name, relationship, ci, birth_date } = await c.req.json();
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -7021,14 +7021,14 @@ app.post("/api/family-dependents", authMiddleware, rateLimiter(RateLimits.MUTATI
 
 app.put("/api/family-dependents/:id", authMiddleware, rateLimiter(RateLimits.MUTATION), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const dependentId = parseInt(c.req.param('id'));
     const { full_name, relationship, ci, birth_date } = await c.req.json();
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -7091,13 +7091,13 @@ app.put("/api/family-dependents/:id", authMiddleware, rateLimiter(RateLimits.MUT
 
 app.delete("/api/family-dependents/:id", authMiddleware, rateLimiter(RateLimits.MUTATION), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const dependentId = parseInt(c.req.param('id'));
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -7137,7 +7137,7 @@ app.delete("/api/family-dependents/:id", authMiddleware, rateLimiter(RateLimits.
 // Logout endpoint (session is managed client-side with Supabase Auth)
 app.get('/api/logout', authMiddleware, async (c) => {
   try {
-    const user = c.get('user') as MochaUser;
+    const user = c.get('user') ;
     try {
       const { data: userProfile } = await db
         .from('users')
@@ -7167,13 +7167,13 @@ app.get("/api/attendance/employee/:id", authMiddleware, async (c) => {
   try {
     const employeeId = parseInt(c.req.param('id'));
     const daysBack = parseInt(c.req.query('days') || '30');
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     // Verificar permisos (ver propia asistencia o ser HR)
     const { data: requester, error: reqErr } = await db
       .from('users')
       .select('id, role')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!requester) {
@@ -7207,12 +7207,12 @@ app.get("/api/attendance/employee/:id", authMiddleware, async (c) => {
 // GET /api/attendance/summary - Resumen de asistencia del mes actual
 app.get("/api/attendance/summary", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -7248,12 +7248,12 @@ app.get("/api/attendance/summary", authMiddleware, async (c) => {
 // GET /api/attendance/today - Asistencia de hoy
 app.get("/api/attendance/today", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile, error: userErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) {
@@ -7330,13 +7330,13 @@ app.get("/api/reports/attendance", authMiddleware, requirePermission(PERMISSIONS
 // POST /api/attendance/manual - Registrar asistencia manual (HR only)
 app.post("/api/attendance/manual", authMiddleware, requirePermission(PERMISSIONS.EMPLOYEE_VIEW), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const { user_id, date, check_in, check_out, status, notes } = await c.req.json();
 
     const { data: requester, error: reqErr } = await db
       .from('users')
       .select('id')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!requester) {

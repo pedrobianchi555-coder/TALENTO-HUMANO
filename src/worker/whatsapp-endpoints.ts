@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { authMiddleware, type AuthUser as MochaUser } from "./supabase-auth";
+import { authMiddleware, type AuthUser } from "./supabase-auth";
 import { createWhatsAppService } from "../shared/whatsapp";
 import { hasPermission, PERMISSIONS } from "./permissions";
 import { db } from "./db";
@@ -17,10 +17,10 @@ const app = new Hono<{ Bindings: Bindings }>();
 // Check WhatsApp configuration status (HR only)
 app.get("/api/whatsapp/config-status", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
-      .from('users').select('role').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('role').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -42,10 +42,10 @@ app.get("/api/whatsapp/config-status", authMiddleware, async (c) => {
 // Test WhatsApp connection (HR only)
 app.get("/api/whatsapp/test-connection", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
-      .from('users').select('role').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('role').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -85,11 +85,11 @@ app.get("/api/whatsapp/test-connection", authMiddleware, async (c) => {
 // Update user WhatsApp preferences
 app.post("/api/whatsapp/preferences", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const { whatsapp_phone, whatsapp_opt_in } = await c.req.json();
 
     const { data: userProfile } = await db
-      .from('users').select('id').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('id').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile) return c.json({ error: 'User profile not found' }, 404);
 
@@ -120,12 +120,12 @@ app.post("/api/whatsapp/preferences", authMiddleware, async (c) => {
 // Get user WhatsApp preferences
 app.get("/api/whatsapp/preferences", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
       .from('users')
       .select('whatsapp_phone, whatsapp_opt_in, whatsapp_opt_in_date')
-      .eq('mocha_user_id', mochaUser.id)
+      .eq('mocha_user_id', authUser.id)
       .single();
 
     if (!userProfile) return c.json({ error: 'User profile not found' }, 404);
@@ -144,10 +144,10 @@ app.get("/api/whatsapp/preferences", authMiddleware, async (c) => {
 // Send WhatsApp notification (HR only)
 app.post("/api/whatsapp/send", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
-      .from('users').select('id, role, hr_permissions').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('id, role, hr_permissions').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR' || !hasPermission(userProfile, PERMISSIONS.CHAT_SEND_BROADCAST)) {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -205,10 +205,10 @@ app.post("/api/whatsapp/send", authMiddleware, async (c) => {
 // Send WhatsApp broadcast (HR only)
 app.post("/api/whatsapp/broadcast", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
-      .from('users').select('id, role, hr_permissions').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('id, role, hr_permissions').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR' || !hasPermission(userProfile, PERMISSIONS.CHAT_SEND_BROADCAST)) {
       return c.json({ error: 'Unauthorized' }, 403);
@@ -357,10 +357,10 @@ app.post("/api/whatsapp/webhook", async (c) => {
 // Get WhatsApp notification history (HR only)
 app.get("/api/whatsapp/notifications", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
-      .from('users').select('id, role').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('id, role').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile) return c.json({ error: 'User profile not found' }, 404);
 

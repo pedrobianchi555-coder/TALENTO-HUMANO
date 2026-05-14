@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { authMiddleware, type AuthUser as MochaUser } from "./supabase-auth";
+import { authMiddleware, type AuthUser } from "./supabase-auth";
 import { PERMISSIONS, ROLE_PRESETS } from "./permissions";
 import { rateLimiter, RateLimits } from "./rate-limiter";
 import { logSecurityEvent, SecurityEventType, createSecurityContext } from "./security-logger";
@@ -15,10 +15,10 @@ const app = new Hono<{ Bindings: Bindings }>();
 // Get all HR users (for permission management)
 app.get("/api/admin/hr-users", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
-      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('*').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -45,7 +45,7 @@ app.get("/api/admin/hr-users", authMiddleware, async (c) => {
 // Update HR user permissions
 app.put("/api/admin/hr-users/:id/permissions", authMiddleware, rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const targetUserId = validator.validateInteger(c.req.param('id'), 1);
     const { permissions } = await c.req.json();
 
@@ -53,20 +53,20 @@ app.put("/api/admin/hr-users/:id/permissions", authMiddleware, rateLimiter(RateL
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.INVALID_INPUT,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { field: 'targetUserId' }
       });
       return c.json({ error: 'Invalid user ID' }, 400);
     }
 
     const { data: userProfile } = await db
-      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('*').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       logSecurityEvent({
         ...createSecurityContext(c),
         type: SecurityEventType.PERMISSION_DENIED,
-        userId: mochaUser.id,
+        userId: authUser.id,
         details: { action: 'update_hr_permissions' }
       });
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -85,7 +85,7 @@ app.put("/api/admin/hr-users/:id/permissions", authMiddleware, rateLimiter(RateL
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.PERMISSION_CHANGED,
-      userId: mochaUser.id,
+      userId: authUser.id,
       userEmail: userProfile.email,
       details: { targetUserId, permissionsCount: permissions.length }
     });
@@ -119,10 +119,10 @@ app.put("/api/admin/hr-users/:id/permissions", authMiddleware, rateLimiter(RateL
 // Get available permissions and role presets
 app.get("/api/admin/permissions-config", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
-      .from('users').select('role').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('role').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -138,12 +138,12 @@ app.get("/api/admin/permissions-config", authMiddleware, async (c) => {
 // Apply role preset to user
 app.post("/api/admin/hr-users/:id/apply-preset", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const targetUserId = parseInt(c.req.param('id'));
     const { preset } = await c.req.json();
 
     const { data: userProfile } = await db
-      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('*').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -181,10 +181,10 @@ app.post("/api/admin/hr-users/:id/apply-preset", authMiddleware, async (c) => {
 // Get all active employees (non-HR users)
 app.get("/api/admin/employees-list", authMiddleware, async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
 
     const { data: userProfile } = await db
-      .from('users').select('role').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('role').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -207,14 +207,14 @@ app.get("/api/admin/employees-list", authMiddleware, async (c) => {
 // Promote employee to HR
 app.post("/api/admin/promote-to-hr/:id", authMiddleware, rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const employeeId = validator.validateInteger(c.req.param('id'), 1);
     const { preset } = await c.req.json();
 
     if (!employeeId) return c.json({ error: 'Invalid employee ID' }, 400);
 
     const { data: userProfile } = await db
-      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('*').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -234,7 +234,7 @@ app.post("/api/admin/promote-to-hr/:id", authMiddleware, rateLimiter(RateLimits.
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.USER_ROLE_CHANGED,
-      userId: mochaUser.id,
+      userId: authUser.id,
       userEmail: userProfile.email,
       details: { targetUserId: employeeId, targetEmail: employee.email, oldRole: 'EMPLOYEE', newRole: 'HR', preset: preset || 'none' }
     });
@@ -265,13 +265,13 @@ app.post("/api/admin/promote-to-hr/:id", authMiddleware, rateLimiter(RateLimits.
 // Demote HR user to employee
 app.post("/api/admin/demote-from-hr/:id", authMiddleware, rateLimiter(RateLimits.SENSITIVE), async (c) => {
   try {
-    const mochaUser = c.get("user") as MochaUser;
+    const authUser = c.get("user") as AuthUser;
     const hrUserId = validator.validateInteger(c.req.param('id'), 1);
 
     if (!hrUserId) return c.json({ error: 'Invalid user ID' }, 400);
 
     const { data: userProfile } = await db
-      .from('users').select('*').eq('mocha_user_id', mochaUser.id).single();
+      .from('users').select('*').eq('mocha_user_id', authUser.id).single();
 
     if (!userProfile || userProfile.role !== 'HR') {
       return c.json({ error: 'Unauthorized: HR access required' }, 403);
@@ -290,7 +290,7 @@ app.post("/api/admin/demote-from-hr/:id", authMiddleware, rateLimiter(RateLimits
     logSecurityEvent({
       ...createSecurityContext(c),
       type: SecurityEventType.USER_ROLE_CHANGED,
-      userId: mochaUser.id,
+      userId: authUser.id,
       userEmail: userProfile.email,
       details: { targetUserId: hrUserId, targetEmail: hrUser.email, oldRole: 'HR', newRole: 'EMPLOYEE' }
     });

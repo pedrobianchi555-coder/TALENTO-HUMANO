@@ -36,8 +36,8 @@
     "hash": "0302672cfa646267f16eed005ea11363"
   },
   "/home/user/TALENTO-HUMANO/src/shared/types.ts": {
-    "mtime": 1777981885.2590404,
-    "hash": "c64fdb5c115e4fa7a04fa4e383dccd3b"
+    "mtime": 1778788909.069441,
+    "hash": "1985a5ec4c47758a99d87c4ee361342c"
   },
   "/home/user/TALENTO-HUMANO/src/react-app/App.tsx": {
     "mtime": 1777994432.0820081,
@@ -303,13 +303,9 @@
     "mtime": 1765499749.0,
     "hash": "c662b336341ae6c0fab2263c44dc4ab4"
   },
-  "/home/user/TALENTO-HUMANO/src/worker/db-adapter.ts": {
-    "mtime": 1777942637.8752174,
-    "hash": "bd0cf00cc0c3d242324e7e0acbdd6921"
-  },
   "/home/user/TALENTO-HUMANO/src/worker/index.ts": {
-    "mtime": 1777994335.5420022,
-    "hash": "b894f3e86a121adca8094d3a91858b70"
+    "mtime": 1778788920.459341,
+    "hash": "891e172863547fdca999b1869d684822"
   },
   "/home/user/TALENTO-HUMANO/src/worker/validation.ts": {
     "mtime": 1765499749.0,
@@ -340,8 +336,8 @@
     "hash": "1bc0ca5a526d22093279819747e18a4c"
   },
   "/home/user/TALENTO-HUMANO/src/worker/whatsapp-endpoints.ts": {
-    "mtime": 1777982028.223037,
-    "hash": "2ea925d29c04e3e473992d2e8264532e"
+    "mtime": 1778788920.4738657,
+    "hash": "5eca7d0b6ea51984fbb6f00a01e2de62"
   },
   "/home/user/TALENTO-HUMANO/src/worker/audit-logger.ts": {
     "mtime": 1765499749.0,
@@ -356,8 +352,8 @@
     "hash": "d54f58860dd2721c4dda69a7d3450f21"
   },
   "/home/user/TALENTO-HUMANO/src/worker/admin-endpoints.ts": {
-    "mtime": 1777981986.387038,
-    "hash": "7cd9a43e7507b93833430082f27276d6"
+    "mtime": 1778788920.467752,
+    "hash": "4b91afaeacc98d7ab90f054b6c584ae4"
   },
   "/home/user/TALENTO-HUMANO/src/worker/security-headers.ts": {
     "mtime": 1765499749.0,
@@ -646,6 +642,10 @@
   "/home/user/TALENTO-HUMANO/index.html": {
     "mtime": 1765499749.0,
     "hash": "77839f529860e46ee16ea999b45b9283"
+  },
+  "/home/user/TALENTO-HUMANO/CLAUDE.md": {
+    "mtime": 1778686769.356554,
+    "hash": "da79aa9343cd2b362206f03762160abc"
   },
   "/home/user/TALENTO-HUMANO/PHASE3_MIGRATION_STATUS.md": {
     "mtime": 1777943352.1186693,
