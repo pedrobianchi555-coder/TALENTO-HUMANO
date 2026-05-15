@@ -1,0 +1,5 @@
+
+DROP INDEX idx_employee_audit_log_performed_at;
+DROP INDEX idx_employee_audit_log_action_type;
+DROP INDEX idx_employee_audit_log_employee_id;
+DROP TABLE employee_audit_log;

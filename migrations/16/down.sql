@@ -1,0 +1,4 @@
+
+DROP INDEX idx_whatsapp_notifications_status;
+DROP INDEX idx_whatsapp_notifications_user_id;
+DROP TABLE whatsapp_notifications;

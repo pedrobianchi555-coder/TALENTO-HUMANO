@@ -1,0 +1,28 @@
+
+CREATE TABLE evaluation_cycles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  description TEXT,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('DRAFT', 'ACTIVE', 'COMPLETED', 'CANCELLED')) DEFAULT 'DRAFT',
+  created_by_id INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE evaluations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  cycle_id INTEGER NOT NULL,
+  employee_id INTEGER NOT NULL,
+  evaluator_id INTEGER NOT NULL,
+  self_score REAL,
+  manager_score REAL,
+  final_score REAL,
+  self_comments TEXT,
+  manager_comments TEXT,
+  status TEXT NOT NULL CHECK (status IN ('PENDING', 'SELF_COMPLETED', 'MANAGER_COMPLETED', 'COMPLETED')) DEFAULT 'PENDING',
+  completed_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
