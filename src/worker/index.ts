@@ -4304,51 +4304,6 @@ app.get("/api/reports/assets/export-pdf", authMiddleware, requirePermission(PERM
     const department = c.req.query('department');
     const employeeId = c.req.query('employee_id');
 
-    let query: string;
-    const params: (string | number)[] = [];
-
-    if (employeeId) {
-      // Report by employee
-      query = `
-        SELECT a.*, ac.name as category_name, u.department as employee_department,
-               u.first_name || ' ' || u.last_name as assigned_to_name
-        FROM assets a
-        JOIN asset_categories ac ON a.category_id = ac.id
-        LEFT JOIN users u ON a.assigned_to_id = u.id
-        WHERE a.assigned_to_id = ?
-        ORDER BY a.name ASC
-      `;
-      params.push(parseInt(employeeId));
-    } else {
-      // General report with filters
-      query = `
-        SELECT a.*, ac.name as category_name, u.first_name || ' ' || u.last_name as assigned_to_name, u.department as employee_department
-        FROM assets a
-        JOIN asset_categories ac ON a.category_id = ac.id
-        LEFT JOIN users u ON a.assigned_to_id = u.id
-        WHERE 1=1
-      `;
-
-      if (categoryId) {
-        query += " AND a.category_id = ?";
-        params.push(parseInt(categoryId));
-      }
-      if (conditionStatus) {
-        query += " AND a.condition_status = ?";
-        params.push(conditionStatus);
-      }
-      if (operationalStatus) {
-        query += " AND a.status = ?";
-        params.push(operationalStatus);
-      }
-      if (department) {
-        query += " AND u.department = ?";
-        params.push(department);
-      }
-
-      query += " ORDER BY a.name ASC";
-    }
-
     // Build Supabase query
     let query = db
       .from('assets')
