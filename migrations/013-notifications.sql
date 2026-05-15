@@ -34,5 +34,7 @@ CREATE POLICY notifications_owner ON notifications
     SELECT id FROM users WHERE mocha_user_id = auth.uid()::text LIMIT 1
   ));
 
--- Habilitar Realtime en la tabla (idempotente - no falla si ya existe)
-ALTER PUBLICATION supabase_realtime ADD TABLE IF NOT EXISTS notifications;
+-- Habilitar Realtime en la tabla
+-- Si ya existe en la publicación (error 42710), ejecuta esto primero:
+-- ALTER PUBLICATION supabase_realtime DROP TABLE notifications;
+ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
