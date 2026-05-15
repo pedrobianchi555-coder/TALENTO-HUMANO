@@ -6,6 +6,8 @@ import aiRoutes from "./ai-endpoints";
 import adminRoutes from "./admin-endpoints";
 import whatsappRoutes from "./whatsapp-endpoints";
 import pulseRoutes from "./pulse-endpoints";
+import notificationRoutes from "./notification-endpoints";
+import { notifyRequestStatusChange, notifyAttendanceRegistered, notifyLoanApproved, notifyAssetAssigned, notifyEvaluationAssigned } from "./notification-helpers";
 import { hasPermission, PERMISSIONS } from "./permissions";
 import { requirePermission } from "./permission-middleware";
 import { securityHeaders } from "./security-headers";
@@ -51,6 +53,9 @@ app.route('/', whatsappRoutes);
 
 // Mount Pulse & Flow routes
 app.route('/', pulseRoutes);
+
+// Mount Notification routes
+app.route('/', notificationRoutes);
 
 
 // Get current user with enhanced profile
@@ -891,6 +896,11 @@ app.post("/api/loans", authMiddleware, async (c) => {
       employee_name: createdLoan.user ? `${createdLoan.user.first_name} ${createdLoan.user.last_name}` : null,
       employee_email: createdLoan.user?.email
     };
+
+    // Notificar al empleado
+    if (createdLoan?.user?.id) {
+      notifyLoanApproved(createdLoan.user.id, createdLoan.principal_amount, 0).catch(() => {});
+    }
 
     return c.json(response);
   } catch (error) {
@@ -2006,12 +2016,28 @@ app.put("/api/requests/:id/status", authMiddleware, requirePermission(PERMISSION
       }
     }
 
+    const { data: requestData } = await db
+      .from('requests')
+      .select('user_id, type')
+      .eq('id', requestId)
+      .single();
+
     const { error: updateErr } = await db
       .from('requests')
       .update(updateData)
       .eq('id', requestId);
 
     if (updateErr) throw updateErr;
+
+    // Notificar al empleado si la solicitud fue aprobada o rechazada
+    if ((status === 'APPROVED' || status === 'REJECTED') && requestData) {
+      notifyRequestStatusChange(
+        requestData.user_id,
+        requestData.type,
+        status,
+        userProfile.id
+      ).catch(() => {}); // fire-and-forget, no bloquear la respuesta
+    }
 
     return c.json({ success: true });
   } catch (error) {
@@ -3776,7 +3802,7 @@ app.post("/api/asset-assignments", authMiddleware, async (c) => {
     if (insertErr) throw insertErr;
 
     // Update asset status and assigned_to_id
-    await db
+    const { data: assetData } = await db
       .from('assets')
       .update({
         status: 'ASSIGNED',
@@ -3784,7 +3810,14 @@ app.post("/api/asset-assignments", authMiddleware, async (c) => {
         assigned_date,
         updated_at: new Date().toISOString()
       })
-      .eq('id', asset_id);
+      .eq('id', asset_id)
+      .select('name')
+      .single();
+
+    // Notificar al empleado
+    if (assetData?.name) {
+      notifyAssetAssigned(user_id, assetData.name, userProfile.id).catch(() => {});
+    }
 
     return c.json({ success: true, assignment_id: assignment.id });
   } catch (error) {
@@ -7381,6 +7414,9 @@ app.post("/api/attendance/manual", authMiddleware, requirePermission(PERMISSIONS
       details: { date, status, notes },
       created_at: new Date().toISOString(),
     });
+
+    // Notificar al empleado
+    notifyAttendanceRegistered(user_id, date, requester.id).catch(() => {});
 
     return c.json(record);
   } catch (error) {

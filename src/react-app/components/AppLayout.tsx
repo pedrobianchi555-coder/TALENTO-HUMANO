@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import { Loader2 } from "lucide-react";
 import Sidebar from "@/react-app/components/Sidebar";
+import NotificationBell from "@/react-app/components/NotificationBell";
 import { useSessionTimeout } from "@/react-app/hooks/useSessionTimeout";
 import SessionTimeoutModal from "@/react-app/components/SessionTimeoutModal";
 import type { EnhancedUser } from "@/shared/types";
@@ -90,6 +91,10 @@ export default function AppLayout({ children }: AppLayoutProps) {
       
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto lg:ml-72">
+        {/* Top bar with notification bell */}
+        <div className="sticky top-0 z-30 flex justify-end px-6 py-3 bg-gray-50 border-b border-gray-200 lg:border-0">
+          <NotificationBell />
+        </div>
         <div className="min-h-full">
           {children}
         </div>

@@ -1,16 +1,16 @@
-# Graph Report - TALENTO-HUMANO  (2026-05-14)
+# Graph Report - TALENTO-HUMANO  (2026-05-15)
 
 ## Corpus Check
-- 160 files · ~117,532 words
+- 165 files · ~119,409 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1070 nodes · 1255 edges · 90 communities (66 shown, 24 thin omitted)
-- Extraction: 92% EXTRACTED · 8% INFERRED · 0% AMBIGUOUS · INFERRED: 95 edges (avg confidence: 0.8)
+- 1094 nodes · 1297 edges · 92 communities (68 shown, 24 thin omitted)
+- Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 97 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `6b1caa77`
+- Built from commit: `2a498ea4`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -95,11 +95,13 @@
 - [[_COMMUNITY_Community 77|Community 77]]
 - [[_COMMUNITY_Community 78|Community 78]]
 - [[_COMMUNITY_Community 79|Community 79]]
+- [[_COMMUNITY_Community 80|Community 80]]
 - [[_COMMUNITY_Community 81|Community 81]]
-- [[_COMMUNITY_Community 82|Community 82]]
+- [[_COMMUNITY_Community 83|Community 83]]
+- [[_COMMUNITY_Community 84|Community 84]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `useAuth()` - 31 edges
+1. `useAuth()` - 32 edges
 2. `usePermissions()` - 19 edges
 3. `GeminiService` - 15 edges
 4. `🎉 ESTADO FINAL DE SESIÓN - Sistema HR Integral` - 15 edges
@@ -122,7 +124,7 @@
 - `Request` --calls--> `usePermissions()`  [INFERRED]
   src/shared/types.ts → src/react-app/hooks/usePermissions.ts
 
-## Communities (90 total, 24 thin omitted)
+## Communities (92 total, 24 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.02
@@ -133,24 +135,24 @@ Cohesion: 0.04
 Nodes (46): 🎓 APRENDIZAJES, Archivo Modificado (Principal), Archivos Documentación, Archivos Nuevos, 🏗️ ARQUITECTURA FINAL, 💾 BASE DE DATOS, 📁 CAMBIOS EN CÓDIGO, code:block1 (1. 480aea6 - Fase 1: Extracción y setup completo) (+38 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.07
-Nodes (19): Chat(), Poll, ChatMessage, ChatOptions, GeminiConfig, GeminiService, GenerateTextOptions, ChatMessage (+11 more)
-
-### Community 3 - "Community 3"
 Cohesion: 0.04
 Nodes (44): 1. Supabase, 2. Agente Ejecutándose, 3. Datos en el Dashboard, code:block1 (📊 Dashboard Completo), code:bash (# 2. Guardar (Ctrl+X, Y, Enter)), code:bash (# 1. Instalar globalmente), code:bash (curl -H "Authorization: Bearer TOKEN" \), code:sql (-- Ver registros sincronizados) (+36 more)
 
-### Community 4 - "Community 4"
+### Community 3 - "Community 3"
 Cohesion: 0.05
 Nodes (43): 1. Ver Asistencia Personal, 2. Resumen del Mes, 3. Asistencia de Hoy, 4. Reporte de Asistencia (HR only), 5. Registrar Asistencia Manual (HR only), Acceso, 📡 API Endpoints, 🏗️ Arquitectura (+35 more)
+
+### Community 4 - "Community 4"
+Cohesion: 0.07
+Nodes (29): AssetEditModal(), AssetEditModalProps, AssetWithDetails, BirthdayCard(), BirthdayCardProps, CandidateDetailModal(), CandidateDetailModalProps, EvaluationDetailModal() (+21 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.05
 Nodes (41): Activos, Administrador RRHH, Arquitectura - Sistema de Gestión de Talento Humano, Backend Routes, Backend (`src/worker/`), Base de datos, Base de datos (`/migrations/`), code:block1 (┌───────────────────────────────────────────────────────────) (+33 more)
 
 ### Community 6 - "Community 6"
-Cohesion: 0.07
-Nodes (27): AssetEditModal(), AssetEditModalProps, AssetWithDetails, BirthdayCard(), BirthdayCardProps, CandidateDetailModal(), CandidateDetailModalProps, EvaluationDetailModal() (+19 more)
+Cohesion: 0.08
+Nodes (15): Chat(), Poll, ChatMessage, ChatOptions, GeminiConfig, GeminiService, GenerateTextOptions, ChatMessage (+7 more)
 
 ### Community 7 - "Community 7"
 Cohesion: 0.05
@@ -189,16 +191,16 @@ Cohesion: 0.1
 Nodes (19): 1. Actualizar tipo Bindings ✅, 2. Inicializar Supabase en el middleware, 3. Reemplazar queries D1 con Supabase, Cambios necesarios, code:typescript (type Bindings = {), code:typescript (app.use('*', async (c, next) => {), code:typescript (const { data, error } = await supabase), code:block5 (SUPABASE_URL=https://your-project.supabase.co) (+11 more)
 
 ### Community 16 - "Community 16"
+Cohesion: 0.11
+Nodes (18): createWhatsAppService(), SendMessageParams, WhatsAppConfig, WhatsAppResponse, now, query, updateData, app (+10 more)
+
+### Community 17 - "Community 17"
 Cohesion: 0.13
 Nodes (14): EmployeeEditModal(), EmployeeEditModalProps, ManagerOption, PERMISSIONS, usePermissions(), UsePermissionsReturn, Complaints(), ComplaintWithUser (+6 more)
 
-### Community 17 - "Community 17"
+### Community 18 - "Community 18"
 Cohesion: 0.14
 Nodes (17): MochaUser, app, authUser, Bindings, employeeId, hrUserId, invalidPerms, permissions (+9 more)
-
-### Community 18 - "Community 18"
-Cohesion: 0.12
-Nodes (16): db, dbHelpers, now, query, updateData, app, authUser, Bindings (+8 more)
 
 ### Community 19 - "Community 19"
 Cohesion: 0.11
@@ -209,20 +211,20 @@ Cohesion: 0.16
 Nodes (10): Recruitment API, ModalConfig, useConfirmationModal(), Employees(), Evaluations(), EvaluationWithDetails, ProfileSetup(), Recruitment() (+2 more)
 
 ### Community 21 - "Community 21"
-Cohesion: 0.15
-Nodes (10): useAuth(), Birthdays(), Home(), ExtendedLoan, Loans(), Profile(), Requests(), RequestWithUser (+2 more)
-
-### Community 22 - "Community 22"
 Cohesion: 0.14
 Nodes (11): Payslips API, BatchUploadResult, CURRENT_YEAR, MONTHS, PayslipUploadModalProps, YEARS, MONTHS, Payslip (+3 more)
 
-### Community 23 - "Community 23"
+### Community 22 - "Community 22"
 Cohesion: 0.24
 Nodes (12): sanitizeString(), validateCI(), validateDate(), validateEmail(), validateFloat(), validateInteger(), validateMoneyAmount(), validateMonth() (+4 more)
 
-### Community 24 - "Community 24"
+### Community 23 - "Community 23"
 Cohesion: 0.23
 Nodes (9): calculateAttendanceRecord(), DAYS_TO_SYNC, groupEventsByDate(), HIKVISION_CONFIG, HikvisionClient, main(), SUPABASE_CONFIG, syncAttendanceData() (+1 more)
+
+### Community 24 - "Community 24"
+Cohesion: 0.2
+Nodes (8): useAuth(), Birthdays(), Home(), Profile(), Requests(), RequestWithUser, Request, profile
 
 ### Community 25 - "Community 25"
 Cohesion: 0.2
@@ -233,76 +235,80 @@ Cohesion: 0.2
 Nodes (5): MOODS, MoodScore, PulseFlow(), TREND_ICON, usePulseDashboard()
 
 ### Community 27 - "Community 27"
+Cohesion: 0.2
+Nodes (9): db, dbHelpers, app, authUser, Bindings, id, limit, now (+1 more)
+
+### Community 28 - "Community 28"
+Cohesion: 0.24
+Nodes (9): AuthUser, app, Bindings, messages, openaiService, authMiddleware(), base64UrlDecode(), Bindings (+1 more)
+
+### Community 29 - "Community 29"
 Cohesion: 0.18
 Nodes (11): Assets Management (12 endpoints), code:typescript (✅ GET /api/candidates           - List candidates with inter), code:typescript (✅ POST /api/interviews          - Create interview record), code:typescript (✅ GET /api/asset-categories     - List categories), code:typescript (✅ GET /api/employee-audit-log   - Filtered audit records), code:typescript (✅ GET /api/employees            - List employees), HR Core Operations (4 endpoints), Interviews (2 endpoints) (+3 more)
 
-### Community 28 - "Community 28"
-Cohesion: 0.31
-Nodes (8): AuditLog(), AuditLogEntry, AuditAction, auditLog(), AuditLogEntry, AuditModule, createAuditContext(), logAudit()
-
-### Community 29 - "Community 29"
+### Community 30 - "Community 30"
 Cohesion: 0.22
 Nodes (6): Bindings, Bindings, requirePermission(), hasPermission(), PERMISSIONS, ROLE_PRESETS
 
-### Community 30 - "Community 30"
+### Community 31 - "Community 31"
+Cohesion: 0.31
+Nodes (8): AuditLog(), AuditLogEntry, AuditAction, auditLog(), AuditLogEntry, AuditModule, createAuditContext(), logAudit()
+
+### Community 32 - "Community 32"
 Cohesion: 0.2
 Nodes (9): code:block11 (Phase 1: Foundation), code:block13 (Duration:           ~2-3 hours equivalent), code:typescript (// 1. Permission/Role Check), 🔄 CONTINUATION SESSION - Phase 3 Migration Progress, ✨ FINAL STATUS, 🏗️ MIGRATION PATTERNS STANDARDIZED, 📈 PHASE PROGRESS TRACKING, 🔐 SECURITY & QUALITY CHECKLIST (+1 more)
 
-### Community 31 - "Community 31"
+### Community 33 - "Community 33"
 Cohesion: 0.31
 Nodes (6): Employee, NewConversationModalProps, Employee, HRUser, PermissionsAdmin(), PermissionsConfig
 
-### Community 32 - "Community 32"
+### Community 34 - "Community 34"
+Cohesion: 0.36
+Nodes (8): createNotification(), CreateNotificationInput, NotificationType, notifyAssetAssigned(), notifyAttendanceRegistered(), notifyEvaluationAssigned(), notifyLoanApproved(), notifyRequestStatusChange()
+
+### Community 35 - "Community 35"
 Cohesion: 0.22
 Nodes (9): Batch Pattern, code:typescript (const { data, error } = await db), code:typescript (const { data, error } = await db), code:typescript (const { error } = await db), code:typescript (const { error } = await db), Insert Pattern, 📈 MIGRATION PATTERN CONSISTENCY, Query Pattern (+1 more)
 
-### Community 33 - "Community 33"
+### Community 36 - "Community 36"
 Cohesion: 0.22
 Nodes (8): Access Control, 📊 CODE METRICS, code:block16 (Files Modified:      1 (src/worker/index.ts)), 🔄 CONTINUATION SESSION - Part 3 Migration Progress, Error Handling, 🔗 REFERENCES, 🔐 SECURITY & QUALITY, ✨ SESSION SUMMARY
 
-### Community 34 - "Community 34"
-Cohesion: 0.38
-Nodes (6): AuthUser, authMiddleware(), AuthUser, base64UrlDecode(), Bindings, verifyJWT()
-
-### Community 35 - "Community 35"
-Cohesion: 0.29
-Nodes (7): Breakdown by Category, code:block5 (BEFORE this part:  70/87 endpoints (80%)), code:block6 (✅ Fully Migrated:        ~82 endpoints), code:block7 (Employees:         ✅ 5/5 (100%)), 📊 CUMULATIVE MIGRATION STATISTICS, Endpoints by Status, Overall Progress
-
-### Community 36 - "Community 36"
-Cohesion: 0.29
-Nodes (7): Chat & Messaging (6 endpoints), code:typescript (✅ GET /api/payslips           - List payslips (role-based)), code:typescript (✅ GET /api/chat/conversations    - List conversations (role-), code:typescript (✅ GET /api/loans/detailed     - Detailed loans with payment ), Loans & Repayment (5 endpoints), ✅ NEWLY MIGRATED ENDPOINTS (PART 3), Payslips Management (4 endpoints)
-
 ### Community 37 - "Community 37"
 Cohesion: 0.29
-Nodes (7): Code Metrics, code:block10 (Reports:        ~14 endpoints (PDF/CSV exports, analytics)), code:block8 (Frontend Files:     No changes), code:block9 (Recruitment:     5/5    (100%) ✅), 📊 DETAILED STATISTICS, Endpoint Categories, Still Using D1 (Remaining Work)
+Nodes (6): NotificationBell(), NotificationItem(), timeAgo(), TYPE_COLORS, AppNotification, useNotifications()
 
 ### Community 38 - "Community 38"
 Cohesion: 0.29
-Nodes (7): code:block14 (Reports (6 endpoints):), code:block15 (Total Migrated This Session: 40 endpoints), code:block16 (1. ce2d0ce - Migrate main report endpoints to Supabase), Commits Added (Part 2), 🔄 CONTINUATION SESSION 2 - Additional Progress, New Endpoints Migrated (This Part), Updated Phase Completion
+Nodes (7): Chat & Messaging (6 endpoints), code:typescript (✅ GET /api/payslips           - List payslips (role-based)), code:typescript (✅ GET /api/chat/conversations    - List conversations (role-), code:typescript (✅ GET /api/loans/detailed     - Detailed loans with payment ), Loans & Repayment (5 endpoints), ✅ NEWLY MIGRATED ENDPOINTS (PART 3), Payslips Management (4 endpoints)
 
 ### Community 39 - "Community 39"
-Cohesion: 0.4
-Nodes (4): BackupOptions, createDatabaseBackup(), generateSQLBackup(), TableBackup
+Cohesion: 0.29
+Nodes (7): Breakdown by Category, code:block5 (BEFORE this part:  70/87 endpoints (80%)), code:block6 (✅ Fully Migrated:        ~82 endpoints), code:block7 (Employees:         ✅ 5/5 (100%)), 📊 CUMULATIVE MIGRATION STATISTICS, Endpoints by Status, Overall Progress
 
 ### Community 40 - "Community 40"
-Cohesion: 0.6
-Nodes (3): AppLayout(), AppLayoutProps, useSessionTimeout()
+Cohesion: 0.29
+Nodes (7): Code Metrics, code:block10 (Reports:        ~14 endpoints (PDF/CSV exports, analytics)), code:block8 (Frontend Files:     No changes), code:block9 (Recruitment:     5/5    (100%) ✅), 📊 DETAILED STATISTICS, Endpoint Categories, Still Using D1 (Remaining Work)
+
+### Community 41 - "Community 41"
+Cohesion: 0.29
+Nodes (7): code:block14 (Reports (6 endpoints):), code:block15 (Total Migrated This Session: 40 endpoints), code:block16 (1. ce2d0ce - Migrate main report endpoints to Supabase), Commits Added (Part 2), 🔄 CONTINUATION SESSION 2 - Additional Progress, New Endpoints Migrated (This Part), Updated Phase Completion
 
 ### Community 42 - "Community 42"
 Cohesion: 0.4
-Nodes (4): createWhatsAppService(), SendMessageParams, WhatsAppConfig, WhatsAppResponse
-
-### Community 43 - "Community 43"
-Cohesion: 0.4
-Nodes (5): code:block8 (Evaluation Endpoints (~4 remaining)), code:block9 (Evaluation endpoints:  ~45 min (complex logic)), Estimated Remaining Time, High Priority (Still Using D1), 🎯 REMAINING WORK
+Nodes (4): BackupOptions, createDatabaseBackup(), generateSQLBackup(), TableBackup
 
 ### Community 44 - "Community 44"
+Cohesion: 0.6
+Nodes (3): AppLayout(), AppLayoutProps, useSessionTimeout()
+
+### Community 45 - "Community 45"
 Cohesion: 0.4
 Nodes (5): code:block10 (✅ 31 tables complete), code:block11 (✅ Single query for related data (no N+1)), 💾 DATABASE & PERFORMANCE, Performance Patterns Applied, Schema Optimization Status
 
 ### Community 46 - "Community 46"
-Cohesion: 0.5
-Nodes (3): MenuItem, Sidebar(), SidebarProps
+Cohesion: 0.4
+Nodes (5): code:block8 (Evaluation Endpoints (~4 remaining)), code:block9 (Evaluation endpoints:  ~45 min (complex logic)), Estimated Remaining Time, High Priority (Still Using D1), 🎯 REMAINING WORK
 
 ### Community 47 - "Community 47"
 Cohesion: 0.83
@@ -314,31 +320,27 @@ Nodes (3): supabase, supabaseAnonKey, supabaseUrl
 
 ### Community 51 - "Community 51"
 Cohesion: 0.5
-Nodes (3): Database, supabaseAdmin, supabaseClient
-
-### Community 52 - "Community 52"
-Cohesion: 0.5
-Nodes (4): Knowledge Gained, Patterns Proven, 🎓 TECHNICAL INSIGHTS, What Went Well
+Nodes (3): MenuItem, Sidebar(), SidebarProps
 
 ### Community 53 - "Community 53"
 Cohesion: 0.5
-Nodes (4): Chat Conversations, 🏗️ KEY IMPROVEMENTS BY ENDPOINT TYPE, Loans Management, Payslips Batch Upload
+Nodes (3): Database, supabaseAdmin, supabaseClient
 
 ### Community 54 - "Community 54"
 Cohesion: 0.5
-Nodes (4): Final Steps, Immediate Priority (Session 4), 🚀 NEXT SESSION ROADMAP, Then Complete
+Nodes (4): Knowledge Gained, Patterns Proven, 🎓 TECHNICAL INSIGHTS, What Went Well
 
 ### Community 55 - "Community 55"
 Cohesion: 0.5
-Nodes (4): code:block1 (1. 62d8f7a - Complete Payslips migration to Supabase (4 endp), Commits Completed This Part, 📈 SESSION ACHIEVEMENTS (PART 3), Total Progress This Part
+Nodes (4): Final Steps, Immediate Priority (Session 4), 🚀 NEXT SESSION ROADMAP, Then Complete
 
 ### Community 56 - "Community 56"
 Cohesion: 0.5
-Nodes (4): ✅ Completed (Continuation Session), 🔄 In Progress, 🎯 PHASE 3 COMPLETION ROADMAP, 📋 Remaining
+Nodes (4): code:block1 (1. 62d8f7a - Complete Payslips migration to Supabase (4 endp), Commits Completed This Part, 📈 SESSION ACHIEVEMENTS (PART 3), Total Progress This Part
 
 ### Community 57 - "Community 57"
 Cohesion: 0.5
-Nodes (4): code:block12 (Tables:         31 (complete)), Current Schema Status, 💾 DATABASE OPTIMIZATION, Performance Improvements Made
+Nodes (4): Chat Conversations, 🏗️ KEY IMPROVEMENTS BY ENDPOINT TYPE, Loans Management, Payslips Batch Upload
 
 ### Community 58 - "Community 58"
 Cohesion: 0.5
@@ -346,35 +348,43 @@ Nodes (4): For Production, 🎓 KEY LEARNINGS, Technical Insights, What Worked W
 
 ### Community 59 - "Community 59"
 Cohesion: 0.5
+Nodes (4): ✅ Completed (Continuation Session), 🔄 In Progress, 🎯 PHASE 3 COMPLETION ROADMAP, 📋 Remaining
+
+### Community 60 - "Community 60"
+Cohesion: 0.5
 Nodes (4): code:block1 (1. e058961 - Migrate Phase 3: Recruitment + Assets (14 endpo), Commits Completed This Continuation, 📈 SESSION ACHIEVEMENTS, Total Progress
 
-### Community 78 - "Community 78"
+### Community 61 - "Community 61"
+Cohesion: 0.5
+Nodes (4): code:block12 (Tables:         31 (complete)), Current Schema Status, 💾 DATABASE OPTIMIZATION, Performance Improvements Made
+
+### Community 80 - "Community 80"
 Cohesion: 0.67
 Nodes (3): For Next Session (Recommended Order), 🚀 NEXT IMMEDIATE STEPS, Quick Wins Available
 
-### Community 79 - "Community 79"
+### Community 81 - "Community 81"
 Cohesion: 0.67
 Nodes (3): Created, 📝 DOCUMENTATION UPDATES, Updated
 
 ## Knowledge Gaps
-- **553 isolated node(s):** `OpenAIConfig`, `GeminiConfig`, `ChatMessage`, `GenerateTextOptions`, `ChatOptions` (+548 more)
+- **563 isolated node(s):** `OpenAIConfig`, `GeminiConfig`, `ChatMessage`, `GenerateTextOptions`, `ChatOptions` (+558 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **24 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `useAuth()` connect `Community 21` to `Community 65`, `Community 2`, `Community 6`, `Community 40`, `Community 45`, `Community 46`, `Community 16`, `Community 20`, `Community 22`, `Community 26`, `Community 28`, `Community 31`?**
+- **Why does `useAuth()` connect `Community 24` to `Community 33`, `Community 4`, `Community 37`, `Community 6`, `Community 44`, `Community 77`, `Community 17`, `Community 51`, `Community 52`, `Community 20`, `Community 21`, `Community 26`, `Community 31`?**
   _High betweenness centrality (0.050) - this node is a cross-community bridge._
-- **Why does `openaiService` connect `Community 2` to `Community 0`?**
-  _High betweenness centrality (0.031) - this node is a cross-community bridge._
-- **Why does `usePermissions()` connect `Community 16` to `Community 2`, `Community 46`, `Community 20`, `Community 21`, `Community 22`, `Community 29`, `Community 31`?**
+- **Why does `openaiService` connect `Community 6` to `Community 0`, `Community 28`?**
+  _High betweenness centrality (0.024) - this node is a cross-community bridge._
+- **Why does `Payslips API` connect `Community 21` to `Community 24`, `Community 17`, `Community 0`, `Community 25`?**
   _High betweenness centrality (0.023) - this node is a cross-community bridge._
-- **Are the 30 inferred relationships involving `useAuth()` (e.g. with `Sidebar()` and `AppLayout()`) actually correct?**
-  _`useAuth()` has 30 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 31 inferred relationships involving `useAuth()` (e.g. with `Sidebar()` and `AppLayout()`) actually correct?**
+  _`useAuth()` has 31 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 16 inferred relationships involving `usePermissions()` (e.g. with `EmployeeEditModal()` and `Sidebar()`) actually correct?**
   _`usePermissions()` has 16 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `OpenAIConfig`, `GeminiConfig`, `ChatMessage` to the rest of the system?**
-  _553 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _563 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.02 - nodes in this community are weakly interconnected._

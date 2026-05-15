@@ -148,12 +148,16 @@
     "hash": "b98272d73047333dd6976160c357e3fb"
   },
   "/home/user/TALENTO-HUMANO/src/react-app/components/Sidebar.tsx": {
-    "mtime": 1777994455.3100095,
-    "hash": "1f4372099a0d8c4b28bae9e573964493"
+    "mtime": 1778846842.8333733,
+    "hash": "d42667c22dafdb2eddf64c04408f69aa"
   },
   "/home/user/TALENTO-HUMANO/src/react-app/components/ImportEmployeesModal.tsx": {
     "mtime": 1777982035.6043463,
     "hash": "4353c9f4cff71f1633164aab8a172cb7"
+  },
+  "/home/user/TALENTO-HUMANO/src/react-app/components/NotificationBell.tsx": {
+    "mtime": 1778846819.7413719,
+    "hash": "d599aebbab22a8b48e3312d3847cf19f"
   },
   "/home/user/TALENTO-HUMANO/src/react-app/components/WhatsAppBroadcastModal.tsx": {
     "mtime": 1777982035.6046264,
@@ -164,8 +168,8 @@
     "hash": "5a1e6b778817985115a0ddf31741936d"
   },
   "/home/user/TALENTO-HUMANO/src/react-app/components/AppLayout.tsx": {
-    "mtime": 1777982035.604947,
-    "hash": "4aa43fc5847901a4e5a37079e4d5faa0"
+    "mtime": 1778846829.8093727,
+    "hash": "95c23a207b00d651b58b277c822bce7f"
   },
   "/home/user/TALENTO-HUMANO/src/react-app/components/EmployeeAssetHistoryModal.tsx": {
     "mtime": 1777982035.6050448,
@@ -182,6 +186,10 @@
   "/home/user/TALENTO-HUMANO/src/react-app/hooks/useConfirmationModal.ts": {
     "mtime": 1777982035.6055167,
     "hash": "5fd283888284a5b37a108555b0ed225e"
+  },
+  "/home/user/TALENTO-HUMANO/src/react-app/hooks/useNotifications.ts": {
+    "mtime": 1778846796.4693706,
+    "hash": "c48e84ab20ee09b131f6e971db1a71cf"
   },
   "/home/user/TALENTO-HUMANO/src/react-app/hooks/useSessionTimeout.ts": {
     "mtime": 1777982035.6058104,
@@ -300,12 +308,16 @@
     "hash": "c662b336341ae6c0fab2263c44dc4ab4"
   },
   "/home/user/TALENTO-HUMANO/src/worker/index.ts": {
-    "mtime": 1778789245.0577204,
-    "hash": "0f4ffe24bcad1e2bbf5151a8164c0802"
+    "mtime": 1778846931.5293787,
+    "hash": "daf1a4d05c7ef2c98b6302da377cd3e3"
   },
   "/home/user/TALENTO-HUMANO/src/worker/validation.ts": {
     "mtime": 1765499749.0,
     "hash": "14767d0364c842b86b406c74943349e3"
+  },
+  "/home/user/TALENTO-HUMANO/src/worker/notification-helpers.ts": {
+    "mtime": 1778846857.2013743,
+    "hash": "031a35000e86330d7fd01301a396d727"
   },
   "/home/user/TALENTO-HUMANO/src/worker/supabase-auth.ts": {
     "mtime": 1777981877.3310404,
@@ -314,6 +326,10 @@
   "/home/user/TALENTO-HUMANO/src/worker/permission-middleware.ts": {
     "mtime": 1765499749.0,
     "hash": "12fffebe9d291ed9a8d537bb50ced521"
+  },
+  "/home/user/TALENTO-HUMANO/src/worker/notification-endpoints.ts": {
+    "mtime": 1778846870.713375,
+    "hash": "32dfcccd0e7ea440b58ebd978f1d1283"
   },
   "/home/user/TALENTO-HUMANO/src/worker/rate-limiter.ts": {
     "mtime": 1765499749.0,
@@ -386,6 +402,10 @@
   "/home/user/TALENTO-HUMANO/migrations/24.sql": {
     "mtime": 1765499749.0,
     "hash": "7a1af703654befb3f0c5be3adb7a3e03"
+  },
+  "/home/user/TALENTO-HUMANO/migrations/013-notifications.sql": {
+    "mtime": 1778846785.59737,
+    "hash": "6dfd6e9e7500b6f4be422f483bb89dc4"
   },
   "/home/user/TALENTO-HUMANO/migrations/30.sql": {
     "mtime": 1765499749.0,
