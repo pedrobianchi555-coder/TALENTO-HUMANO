@@ -19,12 +19,17 @@ CREATE TABLE IF NOT EXISTS attendance_records (
   CONSTRAINT unique_employee_date UNIQUE(user_id, date)
 );
 
+-- Función inmutable para truncar fecha a mes (usada en índices)
+CREATE OR REPLACE FUNCTION date_trunc_month(d DATE) RETURNS DATE AS $$
+  SELECT DATE_TRUNC('month', d)::DATE;
+$$ LANGUAGE SQL IMMUTABLE;
+
 -- Índices para performance
 CREATE INDEX IF NOT EXISTS idx_attendance_user_date ON attendance_records(user_id, date DESC);
 CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance_records(date DESC);
 CREATE INDEX IF NOT EXISTS idx_attendance_status ON attendance_records(status);
 CREATE INDEX IF NOT EXISTS idx_attendance_ci_date ON attendance_records(employee_ci, date);
-CREATE INDEX IF NOT EXISTS idx_attendance_month ON attendance_records(DATE_TRUNC('month', date), user_id);
+CREATE INDEX IF NOT EXISTS idx_attendance_month ON attendance_records(date_trunc_month(date), user_id);
 
 -- Tabla de resumen mensual (caché para reportes rápidos)
 CREATE TABLE IF NOT EXISTS attendance_monthly_summary (
